@@ -77,3 +77,11 @@ R-CAOの初期フェーズにおける憲法、権限分掌、Agent、Task、Tre
 - [Treasury and Rewards](./docs/constitution/TREASURY-AND-REWARDS.md)
 - [Audit and Evidence](./docs/constitution/AUDIT-AND-EVIDENCE.md)
 - [Terms](./docs/constitution/TERMS.md)
+
+# Organization Regulation
+
+R-CAOの組織構造を、従来の人間的な役職階層ではなく、AI Agentの機能循環として定義しています。
+
+- [R-CAO Organization Regulation](./docs/organization/README.md)
+- [Issue #3：AI-nativeな組織構造と社内運用規程](https://github.com/jin-take/r-cao/issues/3)
+- [関連：R-CAO Constitution PR #2](https://github.com/jin-take/r-cao/pull/2)
