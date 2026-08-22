@@ -85,3 +85,24 @@ R-CAOの組織構造を、従来の人間的な役職階層ではなく、AI Age
 - [R-CAO Organization Regulation](./docs/organization/README.md)
 - [Issue #3：AI-nativeな組織構造と社内運用規程](https://github.com/jin-take/r-cao/issues/3)
 - [関連：R-CAO Constitution PR #2](https://github.com/jin-take/r-cao/pull/2)
+
+# Phase 1 System Foundation
+
+統合済みの憲法・組織運用規程に従い、実資産を扱わないオフチェーン組織シミュレーターの基盤を実装しています。
+
+- [Phase 1の実装境界・運用フロー](./docs/implementation/PHASE-1.md)
+- [PostgreSQL schema](./db/schema.sql)
+- [Issue #5：Phase 1 オフチェーン組織シミュレーター基盤](https://github.com/jin-take/r-cao/issues/5)
+- Organization Dashboard: `/`
+- Task Board prototype: `/tasks`
+- Health endpoint: `/api/health`
+
+```bash
+cp .env.example .env
+docker compose up -d postgres
+npm install
+npm test
+npm run dev
+```
+
+Phase 1のRewardは仮想内部台帳のみです。実資産送金、顧客資産管理、Mainnet連携は含みません。
