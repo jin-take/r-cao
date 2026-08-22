@@ -64,3 +64,16 @@ R-CAOは、Software Frameworkですらない。**"未来の企業を設計する
 R-CAOの最終目標は、Autonomous Organizationを現実社会へ実装すること。事業活動（Business）、資産運用（Asset Management）、投資（Investment）、予算構築（Budget Planning）、ガバナンス（Governance）を統合し、人とAutonomous Agentが協調しながら、継続的に価値を創造する新しい企業モデルを実現したい。
 より賢いAgentを作ることではなく、**「時間とともに賢く成長し続ける組織」** を作ることを目指す。
 さらには、AIエージェントの高度化、複雑系なども含めた社会実装と共に成長を続ける **Organizational Operating Model** でありたい
+
+# Constitution
+
+R-CAOの初期フェーズにおける憲法、権限分掌、Agent、Task、Treasury、監査の原則を定義しています。
+
+- [憲法文書一覧](./docs/constitution/README.md)
+- [R-CAO憲法本文](./docs/constitution/R-CAO-CONSTITUTION.md)
+- [Governance](./docs/constitution/GOVERNANCE.md)
+- [Agent Charter](./docs/constitution/AGENT-CHARTER.md)
+- [Tasks and Operations](./docs/constitution/TASKS-AND-OPERATIONS.md)
+- [Treasury and Rewards](./docs/constitution/TREASURY-AND-REWARDS.md)
+- [Audit and Evidence](./docs/constitution/AUDIT-AND-EVIDENCE.md)
+- [Terms](./docs/constitution/TERMS.md)
