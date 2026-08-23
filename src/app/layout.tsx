@@ -13,7 +13,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
       <body>
         <header className="topbar">
           <Link className="brand" href="/">R-CAO</Link>
-          <nav><Link href="/">Dashboard</Link><Link href="/tasks">Task Board</Link></nav>
+          <nav><Link href="/">Dashboard</Link><Link href="/tasks">Task Board</Link><Link href="/operations">Operations</Link></nav>
           <span className="mode">VIRTUAL SOL · OFF-CHAIN</span>
         </header>
         <main>{children}</main>
