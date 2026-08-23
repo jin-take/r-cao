@@ -1,3 +1,9 @@
+// Read-side contracts for the Owner Console.
+//
+// The authoritative policy, state transitions, reward math, and Agent-message
+// validation live in services/rcao (Python). These types deliberately contain
+// no business logic; the console must not become a second control plane.
+
 export const agentRoles = [
   "OWNER",
   "MANAGER",
