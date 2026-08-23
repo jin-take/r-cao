@@ -88,21 +88,75 @@ R-CAOの組織構造を、従来の人間的な役職階層ではなく、AI Age
 
 # Phase 1 System Foundation
 
-統合済みの憲法・組織運用規程に従い、実資産を扱わないオフチェーン組織シミュレーターの基盤を実装しています。
+## Architecture decision in PR #6
 
-- [Phase 1の実装境界・運用フロー](./docs/implementation/PHASE-1.md)
-- [PostgreSQL schema](./db/schema.sql)
-- [Issue #5：Phase 1 オフチェーン組織シミュレーター基盤](https://github.com/jin-take/r-cao/issues/5)
-- Organization Dashboard: `/`
-- Task Board prototype: `/tasks`
-- Health endpoint: `/api/health`
+The repository now separates the system into two deliberate layers:
+
+- `services/rcao`: Python Control Plane and Agent Runtime boundary. This is the
+  canonical home for constitutional policy, Task state transitions, integer
+  lamport Reward calculation, Agent-to-Agent message validation, run context,
+  and the searchable operations contract.
+- `src`: Next.js / TypeScript Owner Console. It is a read-side UI and API
+  client; it does not reimplement authority, Reward math, or Task transitions.
+- PostgreSQL + pgvector: transactional system of record for Tasks, Agents,
+  runs, messages, memory, virtual ledger entries, and audit logs.
+
+OpenAI Agents SDK / Responses API are supported integration points for bounded
+Agent loops, handoffs, guardrails, approvals, and tracing. Codex SDK or Codex
+MCP is a supported coding-specialist provider. A local SLM can be connected via
+an OpenAI-compatible vLLM or llama.cpp endpoint for low-risk classification,
+summarization, and retrieval assistance. Every provider returns a proposal;
+the Python Policy Engine remains the authority boundary.
+
+Rust is not a mandatory dependency. It may be introduced later only for a
+measured performance, isolation, wallet, or on-chain-program requirement. The
+Phase 1 baseline is intentionally Python + TypeScript + PostgreSQL so that the
+domain rules and Agent workflows remain easy to inspect and test.
+
+See [technology selection](docs/architecture/TECHNOLOGY-SELECTION.md) and
+[Phase 1 boundaries](docs/implementation/PHASE-1.md) for the full decision.
+
+## Local development
 
 ```bash
 cp .env.example .env
 docker compose up -d postgres
-npm install
+npm ci
 npm test
-npm run dev
+npm run typecheck
+npm run build
+
+python3 -m venv .venv
+.venv/bin/pip install -e 'services/rcao[dev]'
+.venv/bin/pytest -q services/rcao/tests
 ```
 
-Phase 1のRewardは仮想内部台帳のみです。実資産送金、顧客資産管理、Mainnet連携は含みません。
+Run the Control Plane with:
+
+```bash
+.venv/bin/uvicorn app.main:app --app-dir services/rcao --reload
+```
+
+The Owner Console is available at `http://localhost:3000`. The Python health
+endpoint is `http://localhost:8000/health`; the read-only operations search
+contract is `GET /api/v1/operations/search`.
+
+The local UI routes are:
+
+- `/` — constitutional dashboard
+- `/tasks` — read-only Task Board
+- `/operations` — searchable operations/read-model prototype
+
+## Safety boundary
+
+Phase 1 uses a virtual SOL ledger only. Owner approval is required for formal
+Task issuance, final acceptance, Treasury decisions, and any policy-changing
+operation. Agent messages are proposals or requests and must carry the
+relevant `task_id`; `run_id`, `conversation_id`, `trace_id`, evidence references,
+and idempotency keys preserve the audit chain. Direct Agent-to-Agent asset or
+Reward transfers are rejected by the message validator.
+
+
+- [Issue #5: Phase 1 オフチェーン組織シミュレーター基盤](https://github.com/jin-take/r-cao/issues/5)
+
+Implements the foundation for #5.
