@@ -4,7 +4,7 @@
 
 R-CAO（Reward-driven Compounding Autonomous Organization）は、**報酬（Reward）を原動力として継続的に成長する新しい組織モデル**です。
 
-従来の自律組織（Autonomous Organization）が「意思決定の分散化」を目的としているのに対し、R-CAOは**仕事・報酬・資産・能力・組織価値の循環（Compounding）**によって、長期的に組織を成長させることを目的としています。
+従来の自律組織（Autonomous Organization）が「意思決定の分散化」を目的としているのに対し、R-CAOは **仕事・報酬・資産・能力・組織価値の循環（Compounding）** によって、長期的に組織を成長させることを目的としています。
 
 組織はタスクを遂行することでRewardを獲得し、そのRewardをTreasuryで管理します。そして、ステーキング（Staking）、DeFi運用、アービトラージ、インフラ投資、Validator運営、プロダクト開発などへ戦略的に再投資することで、組織全体の価値を継続的に向上させます。
 
@@ -86,37 +86,8 @@ R-CAOの組織構造を、従来の人間的な役職階層ではなく、AI Age
 - [Issue #3：AI-nativeな組織構造と社内運用規程](https://github.com/jin-take/r-cao/issues/3)
 - [関連：R-CAO Constitution PR #2](https://github.com/jin-take/r-cao/pull/2)
 
-# Phase 1 System Foundation
 
-## Architecture decision in PR #6
-
-The repository now separates the system into two deliberate layers:
-
-- `services/rcao`: Python Control Plane and Agent Runtime boundary. This is the
-  canonical home for constitutional policy, Task state transitions, integer
-  lamport Reward calculation, Agent-to-Agent message validation, run context,
-  and the searchable operations contract.
-- `src`: Next.js / TypeScript Owner Console. It is a read-side UI and API
-  client; it does not reimplement authority, Reward math, or Task transitions.
-- PostgreSQL + pgvector: transactional system of record for Tasks, Agents,
-  runs, messages, memory, virtual ledger entries, and audit logs.
-
-OpenAI Agents SDK / Responses API are supported integration points for bounded
-Agent loops, handoffs, guardrails, approvals, and tracing. Codex SDK or Codex
-MCP is a supported coding-specialist provider. A local SLM can be connected via
-an OpenAI-compatible vLLM or llama.cpp endpoint for low-risk classification,
-summarization, and retrieval assistance. Every provider returns a proposal;
-the Python Policy Engine remains the authority boundary.
-
-Rust is not a mandatory dependency. It may be introduced later only for a
-measured performance, isolation, wallet, or on-chain-program requirement. The
-Phase 1 baseline is intentionally Python + TypeScript + PostgreSQL so that the
-domain rules and Agent workflows remain easy to inspect and test.
-
-See [technology selection](docs/architecture/TECHNOLOGY-SELECTION.md) and
-[Phase 1 boundaries](docs/implementation/PHASE-1.md) for the full decision.
-
-## Local development
+# Local development
 
 ```bash
 cp .env.example .env
@@ -147,16 +118,3 @@ The local UI routes are:
 - `/tasks` — read-only Task Board
 - `/operations` — searchable operations/read-model prototype
 
-## Safety boundary
-
-Phase 1 uses a virtual SOL ledger only. Owner approval is required for formal
-Task issuance, final acceptance, Treasury decisions, and any policy-changing
-operation. Agent messages are proposals or requests and must carry the
-relevant `task_id`; `run_id`, `conversation_id`, `trace_id`, evidence references,
-and idempotency keys preserve the audit chain. Direct Agent-to-Agent asset or
-Reward transfers are rejected by the message validator.
-
-
-- [Issue #5: Phase 1 オフチェーン組織シミュレーター基盤](https://github.com/jin-take/r-cao/issues/5)
-
-Implements the foundation for #5.
