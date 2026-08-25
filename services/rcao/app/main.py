@@ -1,7 +1,14 @@
-from fastapi import FastAPI, Query
+from fastapi import Depends, FastAPI, Query
 from pydantic import BaseModel
 
 from .agent_runtime import runtime_integration_notes
+from .auth import (
+    ActorContext,
+    PolicyCheckRequest,
+    PolicyCheckResponse,
+    evaluate_actor_policy,
+    require_actor,
+)
 from .search import InMemoryOperationSearch, SearchQuery, SearchResponse, SearchScope
 
 
@@ -14,7 +21,7 @@ class HealthResponse(BaseModel):
 
 app = FastAPI(
     title="R-CAO Control Plane",
-    version="0.2.0",
+    version="0.3.0",
     description="Owner-directed control plane and Agent runtime boundary.",
 )
 
@@ -28,6 +35,34 @@ def health() -> HealthResponse:
         phase=1,
         ledger="virtual",
         status="ok",
+    )
+
+
+@app.get("/api/v1/auth/me", response_model=ActorContext)
+def current_actor(actor: ActorContext = Depends(require_actor)) -> ActorContext:
+    """Return the canonical Actor Context established by the bearer token."""
+
+    return actor
+
+
+@app.post("/api/v1/auth/policy-check", response_model=PolicyCheckResponse)
+def policy_check(
+    request: PolicyCheckRequest,
+    actor: ActorContext = Depends(require_actor),
+) -> PolicyCheckResponse:
+    """Evaluate a proposed action without executing a state-changing command."""
+
+    decision, reason = evaluate_actor_policy(
+        actor,
+        request.action,
+        task_id=request.task_id,
+    )
+    return PolicyCheckResponse(
+        actor_id=actor.actor_id,
+        action=request.action,
+        task_id=request.task_id,
+        decision=decision,
+        reason=reason,
     )
 
 

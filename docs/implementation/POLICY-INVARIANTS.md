@@ -13,9 +13,9 @@
 Agentやモデルの出力、Owner Consoleの入力は、Policyの判定を通過しない
 限り状態・台帳・権限を変更できない。
 
-本書はPhase 1の契約である。実際のユーザー認証・Agent identity binding・
-永続Audit transactionは、それぞれ後続Issue #22、#30の実装対象であり、
-本書のrole判定を本番認証の代替にはしない。
+本書はPhase 1の契約である。Issue #22でAPI認証・Owner Identity・Actor Contextの
+reference implementationを追加した。永続Audit transactionはIssue #30の実装対象であり、
+本書のin-memory registryを本番の永続認証基盤の代替にはしない。
 
 ## 判定モデル
 
@@ -77,7 +77,7 @@ Policyの変更は設定ファイルだけで済ませず、コード・テス�
 
 ## 後続Issueとの境界
 
-- #22: Requester identityをOwner roleに結び付ける認証・identity binding
+- #22: API認証・Owner Identity・Actor Context（本PRのreference implementation）
 - #30: PostgreSQL transactionとAuditLogの永続的な整合性
 - #28: Owner approvalとSigner境界
 - #29: Devnetから先へ進むための安全Gate
