@@ -7,6 +7,19 @@ Phase 1では、Python Control Planeを唯一のPolicy・Task・Reward・Agent�
 実行境界とし、Next.js / TypeScriptはOwner向けのread-side consoleとする。
 SOLはすべて整数lamportsの仮想内部台帳で表現する。
 
+## 実行可能なPolicy契約
+
+Phase 1の憲法・Policy対応表とPhase Gateは、
+[Policy Invariants and Phase Gates](./POLICY-INVARIANTS.md)に定義する。
+実装の正本はPython Control PlaneのPolicy moduleであり、Owner Consoleや
+AI providerが独自に権限判定・Reward計算・Task遷移を再実装してはならない。
+
+現在有効なGateはPHASE_1_OFFCHAINであり、仮想台帳とOwner発行Taskだけを
+許可する。Solana DevnetやMPPの検証はDEVNET Gateへ移行した後に限り、
+別途定義されたSigner・監査・停止条件を満たして実行する。認証による
+RequesterとOwnerの結び付けはIssue #22、永続的なAudit transactionは
+Issue #30の対象であり、この文書のrole判定だけでは本番認証を代替しない。
+
 ## 技術選定
 
 | 領域 | 採用 | 役割 |
