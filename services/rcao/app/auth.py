@@ -9,6 +9,7 @@ import os
 import secrets
 import time
 from collections.abc import Callable, Iterable
+from enum import Enum
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Protocol
@@ -30,19 +31,19 @@ TOKEN_HEADER = {"alg": "HS256", "typ": "RCAO"}
 TOKEN_VERSION = 1
 
 
-class ActorType(str, __import__("enum").Enum):
+class ActorType(str, Enum):
     OWNER = "OWNER"
     AGENT = "AGENT"
     SERVICE = "SERVICE"
 
 
-class IdentityStatus(str, __import__("enum").Enum):
+class IdentityStatus(str, Enum):
     ACTIVE = "ACTIVE"
     SUSPENDED = "SUSPENDED"
     REVOKED = "REVOKED"
 
 
-class AuthOutcome(str, __import__("enum").Enum):
+class AuthOutcome(str, Enum):
     SUCCESS = "SUCCESS"
     DENIED = "DENIED"
 
