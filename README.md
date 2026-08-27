@@ -115,6 +115,129 @@ contract is `GET /api/v1/operations/search`.
 The local UI routes are:
 
 - `/` — constitutional dashboard
-- `/tasks` — read-only Task Board
+- `/tasks` — Owner Task Board / MVP command surface
 - `/operations` — searchable operations/read-model prototype
 
+# Owner-Directed MVP
+
+Owner-Directed MVPは、OwnerがTask・予算・最終判断を持ち、固有名を持つ
+Executive Agentが配下のSub Agentを編成して仕事を進める業務サイクルです。
+R-CAOの初期フェーズでは、外部からの仕事受注は禁止し、正式なTaskの発行者は
+Ownerだけとします。
+
+## Core workflow
+
+```text
+Owner Task
+  → Executive Assignment
+  → Planning
+  → Sub Task Execution
+  → Review
+  → Audit
+  → Owner Evaluation
+  → Final Reward Allocation
+  → Completed
+```
+
+Taskの状態は`DRAFT`、`APPROVED`、`PLANNING`、`IN_PROGRESS`、`REVIEW`、
+`AUDIT`、`OWNER_REVIEW`、`REWORK`、`BLOCKED`、`COMPLETED`、`REJECTED`、
+`CANCELLED`で管理します。ReviewとAuditはTask実行者から分離し、Auditが
+`FAIL`の場合はOwner Reviewへ進めません。
+
+## Reward BudgetとReward
+
+Taskの`Reward Budget SOL`は、Ownerが後払い評価時に参照する上限・評価基準です。
+Task完了時の自動支払いではありません。MVPでは次の値を分離して保存します。
+
+- `Reward Budget`：Taskに設定された予算上限
+- `Proposed Reward`：評価を踏まえた参考提案
+- `Approved Reward`：Ownerが明示的に確定した配分
+- `Paid Reward`：将来の支払経路で確定する値。MVPでは常にVirtual Ledger
+
+Reward Statusは`Pending`、`Proposed`、`Approved`、`Paid`、`Reserved`、
+`Cancelled`です。Agent間Reward Transfer、Agentによる自己Reward確定、
+未承認RewardのPaid化はPolicyで拒否します。Budgetを超えるFinal Rewardは、
+Ownerによる理由入力を必須とします。
+
+## Initial Executive Agents
+
+| Name | Role | Mission |
+|---|---|---|
+| Aria | Strategy Executive | FY計画と長期戦略 |
+| Mira | Product Executive | Product / Contentの価値設計 |
+| Theo | Engineering Executive | Design / Development / Technical Review |
+| Noah | Treasury Executive | Budget / Capital Allocation / Asset Managementの提案 |
+| Iris | Audit Executive | Task / Reward / Policy / Riskの監査 |
+| Luca | Operations Executive | Progress / Blocker / Owner Approval Queue |
+
+Sub AgentとExpansion AgentはExecutive配下で管理し、Owner Consoleでは通常折り
+たたみます。すべてのAgentは固有名、Role、Mission、Responsibilities、Authority、
+Prohibited Actions、Reports To、Status、Versionを持ちます。
+
+## Owner Console routes
+
+- `/dashboard`：FY Plan、Active Tasks、Approval、Budget、Audit Alert、Executive Status
+- `/agents` / `/agents/[id]`：Agent Registryと折りたたみ可能なSub Agent
+- `/tasks` / `/tasks/[id]`：Jira形式Task BoardとTask詳細、Review、Audit、Evaluation、Reward
+- `/approvals`：Task、Reward、Proposal、External Actionの統一Approval Center
+- `/rewards`：Reward Budgetと配分状態を確認するVirtual Ledger
+- `/proposals`：Board ProposalとOwner最終決議
+- `/audit`：追記型Audit LogとCorrelation ID
+- `/settings/policies`：Application Codeで検証するPolicy Catalog
+
+Python Control Planeには同じ境界を検証するAPIを用意しています。代表的な
+エンドポイントは`/api/v1/dashboard`、`/api/v1/agents`、`/api/v1/tasks`、
+`/api/v1/approvals`、`/api/v1/rewards`、`/api/v1/proposals`、
+`/api/v1/external-actions`、`/api/v1/audit`です。書き込みCommandは認証済み
+Actor ContextとOwner/Task membershipを通過し、Audit Logへ記録されます。
+
+## External Action
+
+External Actionは、Request ID、Requested By、Recipient、Channel、Purpose、
+Content、Allowed Action Count、Expires At、Owner Decision、Execution Resultを
+持つ申請として管理します。Owner承認がない操作、承認範囲外のRecipient・Channel・
+Content・回数・期限の操作は拒否します。Owner承認後も、今回のMVPではEmail、DM、
+SNS、API Write、Contractなどへの実送信・外部書き込みは行いません。
+
+## Setup and commands
+
+```bash
+cp .env.example .env
+# .envのRCAO_AUTH_SECRETを32 bytes以上のランダム値へ置き換える
+docker compose up -d postgres
+npm ci
+python3 -m venv .venv
+.venv/bin/pip install -e 'services/rcao[dev]'
+
+npm run dev
+.venv/bin/uvicorn app.main:app --app-dir services/rcao --reload
+```
+
+検証コマンドは次のとおりです。
+
+```bash
+npm run typecheck
+npm test
+npm run build
+.venv/bin/pytest -q services/rcao/tests
+```
+
+## Current limitations
+
+- MVPのControl Planeは移行前のインメモリStoreです。PostgreSQLのMVP schemaを
+  `db/schema.sql`に定義し、永続Repositoryへの移行余地を残しています。
+- UIはローカルSeedとOwner Consoleの操作境界を示すクライアント状態です。正式な
+  本番操作ではPython APIを唯一のCommand入口として利用します。
+- 実SOL送金、Solana Wallet、DeFi、Staking、Validator、独自Token、Customer
+  Assets、Agent間送金、外部受注、外部送信、AIによるReward確定は対象外です。
+- Ownerの認証はPhase 1の署名Token境界であり、外部Identity Provider、永続Identity、
+  Transactional Auditは後続のRepository/Transaction実装で追加します。
+
+## Roadmap
+
+1. Owner-Directed MVP：業務サイクル、Policy、Audit、Virtual Reward
+2. PostgreSQL Repository、Transaction、Outbox、Replay
+3. Agent Runtime、A2A、Evidence、Memory
+4. Owner ConsoleとAPIの完全接続
+5. MPP / Solana devnet（別Gate、実資産なし）
+6. Testnet・mainnet・外部活動の移行判定（Owner承認、監査、HSM/Multisig等が前提）

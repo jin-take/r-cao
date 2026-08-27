@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { MvpProvider } from "@/app/mvp-context";
 import "./styles.css";
 
 export const metadata: Metadata = {
@@ -13,10 +14,18 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
       <body>
         <header className="topbar">
           <Link className="brand" href="/">R-CAO</Link>
-          <nav><Link href="/">Dashboard</Link><Link href="/tasks">Task Board</Link><Link href="/operations">Operations</Link></nav>
+          <nav>
+            <Link href="/dashboard">Dashboard</Link>
+            <Link href="/tasks">Tasks</Link>
+            <Link href="/agents">Agents</Link>
+            <Link href="/approvals">Approvals</Link>
+            <Link href="/rewards">Rewards</Link>
+            <Link href="/proposals">Proposals</Link>
+            <Link href="/audit">Audit</Link>
+          </nav>
           <span className="mode">VIRTUAL SOL · OFF-CHAIN</span>
         </header>
-        <main>{children}</main>
+        <MvpProvider><main>{children}</main></MvpProvider>
       </body>
     </html>
   );

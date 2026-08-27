@@ -34,6 +34,7 @@ R-CAO（Reward-driven Compounding Autonomous Organization）の憲法および�
 | [TREASURY-AND-REWARDS.md](./TREASURY-AND-REWARDS.md) | Master Wallet、予算、Reward、給与、再投資 |
 | [AUDIT-AND-EVIDENCE.md](./AUDIT-AND-EVIDENCE.md) | 監査、Audit Log、証跡、インシデント対応 |
 | [TERMS.md](./TERMS.md) | R-CAO固有用語の定義 |
+| [OWNER-DIRECTED-MVP-RULES.md](./OWNER-DIRECTED-MVP-RULES.md) | Owner-Directed MVPの実装拘束ルール |
 
 ## 規範用語
 

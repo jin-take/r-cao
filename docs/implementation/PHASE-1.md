@@ -2,6 +2,10 @@
 
 ## 目的
 
+Owner-Directed MVPの実装仕様は[OWNER-DIRECTED-MVP.md](./OWNER-DIRECTED-MVP.md)に
+定義しています。Phase 1では、Owner Task、Review、Audit、Owner Evaluation、
+Virtual Rewardを扱い、実資産と外部Actionの実行経路は閉じています。
+
 R-CAO憲法と組織運用規程を、実資産を扱わない安全な実行環境へ落とし込む。
 Phase 1では、Python Control Planeを唯一のPolicy・Task・Reward・Agent通信の
 実行境界とし、Next.js / TypeScriptはOwner向けのread-side consoleとする。
