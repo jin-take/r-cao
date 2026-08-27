@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -10,6 +12,7 @@ from app.auth import (
     Authenticator,
     AuthenticationError,
     AuthOutcome,
+    build_runtime_authenticator,
     IdentityError,
     IdentityRegistry,
     InMemoryAuthAuditLog,
@@ -77,6 +80,18 @@ def test_identity_registry_rejects_duplicates_and_invalid_owner_roles() -> None:
                 name="owner",
                 role=AgentRole.BUILDER,
                 actor_type=ActorType.AGENT,
+                phase=Phase.PHASE_1_OFFCHAIN,
+            )
+        )
+
+    with pytest.raises(IdentityError, match="one canonical Owner"):
+        registry.register(
+            ActorIdentity(
+                actor_id="owner-2",
+                subject="owner-subject-2",
+                name="Second Owner",
+                role=AgentRole.OWNER,
+                actor_type=ActorType.OWNER,
                 phase=Phase.PHASE_1_OFFCHAIN,
             )
         )
@@ -209,10 +224,20 @@ def test_api_rejects_tampered_token() -> None:
     client = TestClient(app)
 
     token = authenticator.issue_token("owner-subject")
-    tampered = f"{token[:-1]}x"
+    header_segment, payload_segment, signature_segment = token.split(".")
+    signature = bytearray(base64.urlsafe_b64decode(signature_segment + "=="))
+    signature[0] ^= 0x01
+    tampered_signature = base64.urlsafe_b64encode(signature).rstrip(b"=").decode()
+    tampered = f"{header_segment}.{payload_segment}.{tampered_signature}"
     response = client.get(
         "/api/v1/auth/me",
         headers={"Authorization": f"Bearer {tampered}"},
     )
 
     assert response.status_code == 401
+
+
+def test_runtime_rejects_checked_in_placeholder_secret(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("RCAO_AUTH_SECRET", "__SET_IN_LOCAL_ENV__")
+    with pytest.raises(AuthenticationError, match="replaced"):
+        build_runtime_authenticator()

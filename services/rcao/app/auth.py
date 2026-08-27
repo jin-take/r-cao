@@ -9,9 +9,9 @@ import os
 import secrets
 import time
 from collections.abc import Callable, Iterable
-from enum import Enum
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from enum import Enum
 from typing import Protocol
 
 from fastapi import Depends, Header, HTTPException
@@ -125,6 +125,7 @@ class IdentityRegistry:
         self._by_actor_id: dict[str, ActorIdentity] = {}
         self._by_subject: dict[str, ActorIdentity] = {}
         self._revoked_tokens: set[str] = set()
+        self._owner_actor_id: str | None = None
         for identity in identities:
             self.register(identity)
 
@@ -143,6 +144,8 @@ class IdentityRegistry:
             and identity.role is not AgentRole.OWNER
         ):
             raise IdentityError("Owner identity must carry the OWNER role")
+        if identity.actor_type is ActorType.OWNER and self._owner_actor_id is not None:
+            raise IdentityError("only one canonical Owner identity may be registered")
         if (
             identity.actor_type is not ActorType.OWNER
             and identity.role is AgentRole.OWNER
@@ -150,6 +153,8 @@ class IdentityRegistry:
             raise IdentityError("Only the Owner identity may carry the OWNER role")
         self._by_actor_id[identity.actor_id] = identity
         self._by_subject[identity.subject] = identity
+        if identity.actor_type is ActorType.OWNER:
+            self._owner_actor_id = identity.actor_id
 
     def get_by_subject(self, subject: str) -> ActorIdentity:
         try:
@@ -488,9 +493,12 @@ def require_owner_actor(
 
 def build_runtime_authenticator() -> Authenticator:
     secret = os.getenv("RCAO_AUTH_SECRET", "")
-    if len(secret.encode("utf-8")) < 32:
+    if (
+        len(secret.encode("utf-8")) < 32
+        or secret in {"replace-with-at-least-32-random-bytes", "__SET_IN_LOCAL_ENV__"}
+    ):
         raise AuthenticationError(
-            "RCAO_AUTH_SECRET must contain at least 32 bytes"
+            "RCAO_AUTH_SECRET must be replaced with at least 32 random bytes"
         )
     try:
         phase = Phase(
