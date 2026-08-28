@@ -20,6 +20,25 @@ class Phase(str, Enum):
 
 class PolicyAction(str, Enum):
     ISSUE_TASK = "ISSUE_TASK"
+    CREATE_TASK = "CREATE_TASK"
+    ASSIGN_EXECUTIVE = "ASSIGN_EXECUTIVE"
+    TRANSITION_TASK = "TRANSITION_TASK"
+    CREATE_SUBTASK = "CREATE_SUBTASK"
+    START_TASK = "START_TASK"
+    SUBMIT_REVIEW = "SUBMIT_REVIEW"
+    RECORD_AUDIT = "RECORD_AUDIT"
+    OWNER_EVALUATE_TASK = "OWNER_EVALUATE_TASK"
+    APPROVE_REWARD = "APPROVE_REWARD"
+    DECIDE_APPROVAL = "DECIDE_APPROVAL"
+    CREATE_AGENT = "CREATE_AGENT"
+    STOP_AGENT = "STOP_AGENT"
+    CHANGE_AGENT_STATUS = "CHANGE_AGENT_STATUS"
+    CHANGE_AGENT_AUTHORITY = "CHANGE_AGENT_AUTHORITY"
+    CREATE_BOARD_PROPOSAL = "CREATE_BOARD_PROPOSAL"
+    DECIDE_BOARD_PROPOSAL = "DECIDE_BOARD_PROPOSAL"
+    REQUEST_EXTERNAL_ACTION = "REQUEST_EXTERNAL_ACTION"
+    DECIDE_EXTERNAL_ACTION = "DECIDE_EXTERNAL_ACTION"
+    EXECUTE_EXTERNAL_ACTION = "EXECUTE_EXTERNAL_ACTION"
     FINAL_ACCEPT_TASK = "FINAL_ACCEPT_TASK"
     FINAL_REJECT_TASK = "FINAL_REJECT_TASK"
     CANCEL_TASK = "CANCEL_TASK"
@@ -103,6 +122,65 @@ PHASE_GATES: dict[Phase, PhaseGate] = {
 
 _ROLE_ACTIONS: dict[PolicyAction, frozenset[AgentRole]] = {
     PolicyAction.ISSUE_TASK: frozenset({AgentRole.OWNER}),
+    PolicyAction.CREATE_TASK: frozenset({AgentRole.OWNER}),
+    PolicyAction.ASSIGN_EXECUTIVE: frozenset({AgentRole.OWNER}),
+    PolicyAction.TRANSITION_TASK: frozenset({AgentRole.OWNER}),
+    PolicyAction.CREATE_SUBTASK: frozenset(
+        {
+            AgentRole.OWNER,
+            AgentRole.STRATEGY,
+            AgentRole.PRODUCT,
+            AgentRole.ENGINEERING,
+            AgentRole.OPERATIONS,
+            AgentRole.MANAGER,
+        }
+    ),
+    PolicyAction.START_TASK: frozenset(
+        {
+            AgentRole.OWNER,
+            AgentRole.STRATEGY,
+            AgentRole.PRODUCT,
+            AgentRole.ENGINEERING,
+            AgentRole.OPERATIONS,
+            AgentRole.MANAGER,
+        }
+    ),
+    PolicyAction.SUBMIT_REVIEW: frozenset({AgentRole.REVIEWER}),
+    PolicyAction.RECORD_AUDIT: frozenset({AgentRole.AUDITOR}),
+    PolicyAction.OWNER_EVALUATE_TASK: frozenset({AgentRole.OWNER}),
+    PolicyAction.APPROVE_REWARD: frozenset({AgentRole.OWNER}),
+    PolicyAction.DECIDE_APPROVAL: frozenset({AgentRole.OWNER}),
+    PolicyAction.CREATE_AGENT: frozenset({AgentRole.OWNER}),
+    PolicyAction.STOP_AGENT: frozenset({AgentRole.OWNER}),
+    PolicyAction.CHANGE_AGENT_STATUS: frozenset({AgentRole.OWNER}),
+    PolicyAction.CHANGE_AGENT_AUTHORITY: frozenset({AgentRole.OWNER}),
+    PolicyAction.CREATE_BOARD_PROPOSAL: frozenset(
+        {
+            AgentRole.OWNER,
+            AgentRole.STRATEGY,
+            AgentRole.PRODUCT,
+            AgentRole.ENGINEERING,
+            AgentRole.TREASURY,
+            AgentRole.AUDITOR,
+            AgentRole.OPERATIONS,
+            AgentRole.MANAGER,
+        }
+    ),
+    PolicyAction.DECIDE_BOARD_PROPOSAL: frozenset({AgentRole.OWNER}),
+    PolicyAction.REQUEST_EXTERNAL_ACTION: frozenset(
+        {
+            AgentRole.OWNER,
+            AgentRole.STRATEGY,
+            AgentRole.PRODUCT,
+            AgentRole.ENGINEERING,
+            AgentRole.TREASURY,
+            AgentRole.AUDITOR,
+            AgentRole.OPERATIONS,
+            AgentRole.MANAGER,
+        }
+    ),
+    PolicyAction.DECIDE_EXTERNAL_ACTION: frozenset({AgentRole.OWNER}),
+    PolicyAction.EXECUTE_EXTERNAL_ACTION: frozenset({AgentRole.OWNER}),
     PolicyAction.FINAL_ACCEPT_TASK: frozenset({AgentRole.OWNER}),
     PolicyAction.FINAL_REJECT_TASK: frozenset({AgentRole.OWNER}),
     PolicyAction.CANCEL_TASK: frozenset({AgentRole.OWNER}),
@@ -114,6 +192,19 @@ _ROLE_ACTIONS: dict[PolicyAction, frozenset[AgentRole]] = {
 _OWNER_ONLY_ACTIONS = frozenset(
     {
         PolicyAction.ISSUE_TASK,
+        PolicyAction.CREATE_TASK,
+        PolicyAction.ASSIGN_EXECUTIVE,
+        PolicyAction.TRANSITION_TASK,
+        PolicyAction.OWNER_EVALUATE_TASK,
+        PolicyAction.APPROVE_REWARD,
+        PolicyAction.DECIDE_APPROVAL,
+        PolicyAction.CREATE_AGENT,
+        PolicyAction.STOP_AGENT,
+        PolicyAction.CHANGE_AGENT_STATUS,
+        PolicyAction.CHANGE_AGENT_AUTHORITY,
+        PolicyAction.DECIDE_BOARD_PROPOSAL,
+        PolicyAction.DECIDE_EXTERNAL_ACTION,
+        PolicyAction.EXECUTE_EXTERNAL_ACTION,
         PolicyAction.FINAL_ACCEPT_TASK,
         PolicyAction.FINAL_REJECT_TASK,
         PolicyAction.CANCEL_TASK,

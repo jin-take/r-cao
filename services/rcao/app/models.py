@@ -6,6 +6,10 @@ from pydantic import BaseModel, Field
 
 class AgentRole(str, Enum):
     OWNER = "OWNER"
+    STRATEGY = "STRATEGY"
+    PRODUCT = "PRODUCT"
+    ENGINEERING = "ENGINEERING"
+    OPERATIONS = "OPERATIONS"
     MANAGER = "MANAGER"
     RESEARCHER = "RESEARCHER"
     BUILDER = "BUILDER"

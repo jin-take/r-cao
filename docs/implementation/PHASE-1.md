@@ -2,6 +2,10 @@
 
 ## 目的
 
+Owner-Directed MVPの実装仕様は[OWNER-DIRECTED-MVP.md](./OWNER-DIRECTED-MVP.md)に
+定義しています。Phase 1では、Owner Task、Review、Audit、Owner Evaluation、
+Virtual Rewardを扱い、実資産と外部Actionの実行経路は閉じています。
+
 R-CAO憲法と組織運用規程を、実資産を扱わない安全な実行環境へ落とし込む。
 Phase 1では、Python Control Planeを唯一のPolicy・Task・Reward・Agent通信の
 実行境界とし、Next.js / TypeScriptはOwner向けのread-side consoleとする。
@@ -17,8 +21,9 @@ AI providerが独自に権限判定・Reward計算・Task遷移を再実装し�
 現在有効なGateはPHASE_1_OFFCHAINであり、仮想台帳とOwner発行Taskだけを
 許可する。Solana DevnetやMPPの検証はDEVNET Gateへ移行した後に限り、
 別途定義されたSigner・監査・停止条件を満たして実行する。認証による
-RequesterとOwnerの結び付けはIssue #22、永続的なAudit transactionは
-Issue #30の対象であり、この文書のrole判定だけでは本番認証を代替しない。
+RequesterとOwnerの結び付けはIssue #22のAPI認証・Owner Identity・Actor
+Contextで行う。永続的なAudit transactionはIssue #30の対象であり、この文書の
+reference implementationだけでは本番の永続認証基盤を代替しない。
 
 ## 技術選定
 
@@ -156,6 +161,7 @@ python3 -m venv .venv
 - Operations read modelからTask、Run、Message、Memory、Auditを検索できる。
 - すべての重要な状態変更をAuditLogから再現できる。
 
-現時点のUIと検索adapterは読み取り専用プロトタイプである。認証、Repository層、
+現時点のUIと検索adapterは読み取り専用プロトタイプである。Issue #22でAPI認証・
+Owner Identity・Actor Contextのreference implementationを追加した。Repository層、
 DBトランザクション、Provider実接続、書き込みAPIは、Policy契約を保ったまま
 次のPRで追加する。
