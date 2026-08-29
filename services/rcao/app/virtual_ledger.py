@@ -8,9 +8,8 @@ asset.
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any, Mapping
 from uuid import uuid4
 
