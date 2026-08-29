@@ -365,9 +365,9 @@ export function isBlockingAuditAlert(
 }
 
 export function isOwnerApprovalPending(
-  log: Pick<MvpAuditLog, "policyResult">,
+  approval: Pick<MvpApproval, "ownerDecision">,
 ): boolean {
-  return log.policyResult === "OWNER_APPROVAL_REQUIRED";
+  return approval.ownerDecision === null;
 }
 
 export function formatSol(lamports: number): string {
