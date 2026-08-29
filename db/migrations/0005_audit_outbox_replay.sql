@@ -22,6 +22,13 @@ ALTER TABLE mvp_outbox_events
   ADD COLUMN IF NOT EXISTS last_error TEXT,
   ADD COLUMN IF NOT EXISTS available_at TIMESTAMPTZ NOT NULL DEFAULT now();
 
+-- Existing rows with a publication timestamp are already delivered. Do not
+-- let the new default turn them back into pending work during adoption.
+UPDATE mvp_outbox_events
+SET delivery_status = 'PUBLISHED'
+WHERE published_at IS NOT NULL
+  AND delivery_status = 'PENDING';
+
 DO $$
 BEGIN
   IF NOT EXISTS (
