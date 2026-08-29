@@ -9,6 +9,7 @@ root; tests can use a small fake connection.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
@@ -72,6 +73,22 @@ class TaskTransitionCommand:
         ):
             if not getattr(self, field_name):
                 raise ValueError(f"{field_name} is required")
+
+    def request_fingerprint(self) -> str:
+        """Return a stable digest for the complete command request."""
+
+        payload = {
+            "command_name": "TRANSITION_TASK",
+            "request": asdict(self),
+        }
+        encoded = json.dumps(
+            payload,
+            default=str,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+        return hashlib.sha256(encoded).hexdigest()
 
 
 @dataclass(frozen=True)
@@ -142,22 +159,28 @@ class RepositoryTransaction:
                 close()
 
     def _claim_idempotency(self, command: TaskTransitionCommand) -> TaskTransitionResult | None:
+        request_fingerprint = command.request_fingerprint()
         inserted = self._fetchone(
             """
             INSERT INTO mvp_command_idempotency
-              (idempotency_key, command_name, actor_id)
-            VALUES (%s, %s, %s)
+              (idempotency_key, command_name, actor_id, request_fingerprint)
+            VALUES (%s, %s, %s, %s)
             ON CONFLICT (idempotency_key) DO NOTHING
             RETURNING idempotency_key
             """,
-            (command.idempotency_key, "TRANSITION_TASK", command.actor_id),
+            (
+                command.idempotency_key,
+                "TRANSITION_TASK",
+                command.actor_id,
+                request_fingerprint,
+            ),
         )
         if inserted is not None:
             return None
 
         existing = self._fetchone(
             """
-            SELECT command_name, actor_id, response
+            SELECT command_name, actor_id, request_fingerprint, response
             FROM mvp_command_idempotency
             WHERE idempotency_key = %s
             FOR UPDATE
@@ -176,7 +199,19 @@ class RepositoryTransaction:
                 "idempotency key is already bound to another command or actor"
             )
 
-        response = _row_value(existing, "response", 2)
+        existing_fingerprint = _row_value(existing, "request_fingerprint", 2)
+        if not existing_fingerprint or str(existing_fingerprint).startswith(
+            "legacy-unfingerprinted:"
+        ):
+            raise IdempotencyConflictError(
+                "idempotency record predates request fingerprinting; use a new key"
+            )
+        if str(existing_fingerprint) != request_fingerprint:
+            raise IdempotencyConflictError(
+                "idempotency key is already bound to a different request"
+            )
+
+        response = _row_value(existing, "response", 3)
         if response is None:
             raise CommandInProgressError("idempotent command has not completed")
         if isinstance(response, str):

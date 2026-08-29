@@ -555,6 +555,7 @@ CREATE TABLE mvp_command_idempotency (
   idempotency_key TEXT PRIMARY KEY,
   command_name TEXT NOT NULL,
   actor_id TEXT NOT NULL,
+  request_fingerprint TEXT NOT NULL,
   response JSONB,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   completed_at TIMESTAMPTZ,
