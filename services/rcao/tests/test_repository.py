@@ -213,3 +213,36 @@ def test_idempotency_key_cannot_change_request() -> None:
 
     with pytest.raises(IdempotencyConflictError):
         repository.transition_task(conflicting)
+
+
+def test_agent_task_transition_is_gated_by_the_canonical_registry(monkeypatch) -> None:
+    calls: list[dict[str, object]] = []
+
+    class Registry:
+        def __init__(self, transaction) -> None:
+            self.transaction = transaction
+
+        def ensure_can_participate(self, agent_id: str, **kwargs: object) -> None:
+            calls.append({"agent_id": agent_id, **kwargs})
+
+    monkeypatch.setattr("app.agent_registry.AgentRegistryRepository", Registry)
+    connection = FakeConnection()
+    repository = PostgresRepository(lambda: connection)
+    agent_command = replace(
+        command(),
+        actor_id="agent-theo",
+        actor_type="AGENT",
+        risk_level="LOW",
+    )
+
+    repository.transition_task(agent_command)
+
+    assert calls == [
+        {
+            "agent_id": "agent-theo",
+            "task_id": "T-001",
+            "action": "TRANSITION_TASK",
+            "amount_lamports": 0,
+            "risk_level": "LOW",
+        }
+    ]

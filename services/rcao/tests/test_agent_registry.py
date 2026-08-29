@@ -6,6 +6,7 @@ from app.agent_registry import (
     AgentMembership,
     AgentNotEligibleError,
     AgentRegistryPolicy,
+    AgentRegistryRepository,
     DelegationError,
     DelegationGrant,
     MembershipError,
@@ -86,6 +87,52 @@ def test_active_agent_requires_task_membership_and_respects_scopes() -> None:
         amount_lamports=50,
         now=NOW,
     )
+
+
+def test_hard_budget_limit_applies_when_scope_is_empty() -> None:
+    with pytest.raises(AgentNotEligibleError, match="budget limit"):
+        AgentRegistryPolicy.ensure_can_participate(
+            agent(budget_scope={}, budget_limit_lamports=10),
+            task_id="T-001",
+            membership=membership(),
+            amount_lamports=11,
+            now=NOW,
+        )
+
+
+def test_agent_and_delegation_risk_scopes_are_enforced() -> None:
+    with pytest.raises(AgentNotEligibleError, match="risk classification"):
+        AgentRegistryPolicy.ensure_can_participate(
+            agent(risk_scope={"max": "LOW"}),
+            task_id="T-001",
+            membership=membership(),
+            risk_level="MEDIUM",
+            now=NOW,
+        )
+
+    with pytest.raises(DelegationError, match="risk classification"):
+        AgentRegistryPolicy.ensure_can_participate(
+            agent(risk_scope={"max": "HIGH"}),
+            task_id="T-001",
+            membership=membership(),
+            delegation=delegation(risk_scope={"max": "LOW"}),
+            action="REVIEW",
+            risk_level="MEDIUM",
+            now=NOW,
+        )
+
+
+def test_empty_requested_delegation_is_rejected() -> None:
+    class RegistryTransaction:
+        def fetch_one(self, statement: str, params: tuple[object, ...] = ()) -> object:
+            return None
+
+    registry = AgentRegistryRepository(RegistryTransaction())
+    registry.require_agent = lambda agent_id: agent()  # type: ignore[method-assign]
+    registry.get_delegation = lambda delegation_id: None  # type: ignore[method-assign]
+
+    with pytest.raises(DelegationError, match="not registered"):
+        registry.ensure_can_participate("agent-theo", delegation_id="missing")
 
 
 def test_suspended_agent_cannot_participate() -> None:

@@ -40,6 +40,14 @@ class DelegationError(AgentRegistryError):
     """The delegation grant is invalid or outside its scope."""
 
 
+RISK_LEVEL_ORDER = {
+    "LOW": 0,
+    "MEDIUM": 1,
+    "HIGH": 2,
+    "CRITICAL": 3,
+}
+
+
 AGENT_RECORD_COLUMNS = (
     "id",
     "identity_id",
@@ -351,6 +359,46 @@ class AgentRegistryPolicy:
                 raise AgentNotEligibleError(f"Agent {agent.agent_id} registration has expired")
 
     @staticmethod
+    def _ensure_risk_scope(
+        scope: Mapping[str, Any],
+        requested_risk: str | None,
+        *,
+        error_type: type[AgentRegistryError],
+    ) -> None:
+        """Require an explicit, persisted allow rule for classified work."""
+
+        if requested_risk is None:
+            return
+        normalized = requested_risk.upper()
+        if normalized not in RISK_LEVEL_ORDER:
+            raise error_type(f"invalid risk classification: {requested_risk}")
+        if not scope:
+            raise error_type("risk classification is not allowed by an empty risk scope")
+
+        allowed = scope.get("allowed", scope.get("levels"))
+        if allowed is not None:
+            if not isinstance(allowed, (list, tuple, set)):
+                raise error_type("risk scope allowed levels must be a list")
+            normalized_allowed = {str(item).upper() for item in allowed}
+            if normalized not in normalized_allowed:
+                raise error_type(
+                    f"risk classification is outside the allowed scope: {requested_risk}"
+                )
+
+        maximum = scope.get("max")
+        if maximum is not None:
+            normalized_maximum = str(maximum).upper()
+            if normalized_maximum not in RISK_LEVEL_ORDER:
+                raise error_type(f"invalid maximum risk classification: {maximum}")
+            if RISK_LEVEL_ORDER[normalized] > RISK_LEVEL_ORDER[normalized_maximum]:
+                raise error_type(
+                    f"risk classification exceeds the permitted maximum: {requested_risk}"
+                )
+
+        if allowed is None and maximum is None:
+            raise error_type("risk scope does not define an allow rule")
+
+    @staticmethod
     def ensure_can_participate(
         agent: RegisteredAgent,
         *,
@@ -362,6 +410,7 @@ class AgentRegistryPolicy:
         required_tool: str | None = None,
         network: str | None = None,
         amount_lamports: int = 0,
+        risk_level: str | None = None,
         now: datetime | None = None,
     ) -> None:
         AgentRegistryPolicy.ensure_active(agent, now=now)
@@ -374,9 +423,23 @@ class AgentRegistryPolicy:
         if network is not None and network not in agent.network_scope:
             raise AgentNotEligibleError(f"Network is outside the Agent scope: {network}")
 
+        # budget_limit_lamports is the hard persisted limit.  budget_scope can
+        # narrow it further, but an omitted scope value must never mean
+        # unlimited spending.
+        if amount_lamports > agent.budget_limit_lamports:
+            raise AgentNotEligibleError("Requested amount exceeds the Agent budget limit")
         max_budget = agent.budget_scope.get("max_lamports")
-        if isinstance(max_budget, (int, float)) and amount_lamports > max_budget:
+        if max_budget is not None and (
+            type(max_budget) is not int or max_budget < 0
+        ):
+            raise AgentNotEligibleError("Agent budget scope has an invalid maximum")
+        if max_budget is not None and amount_lamports > max_budget:
             raise AgentNotEligibleError("Requested amount exceeds the Agent budget scope")
+        AgentRegistryPolicy._ensure_risk_scope(
+            agent.risk_scope,
+            risk_level,
+            error_type=AgentNotEligibleError,
+        )
         if task_id is not None:
             if membership is None or membership.agent_id != agent.agent_id or membership.task_id != task_id:
                 raise MembershipError("Agent is not a member of the requested Task")
@@ -401,6 +464,11 @@ class AgentRegistryPolicy:
                 raise DelegationError(f"Action is outside the delegation scope: {action}")
             if amount_lamports > delegation.budget_limit_lamports:
                 raise DelegationError("Requested amount exceeds the delegation budget")
+            AgentRegistryPolicy._ensure_risk_scope(
+                delegation.risk_scope,
+                risk_level,
+                error_type=DelegationError,
+            )
 
 
 class AgentRegistryRepository:
@@ -472,10 +540,13 @@ class AgentRegistryRepository:
         required_tool: str | None = None,
         network: str | None = None,
         amount_lamports: int = 0,
+        risk_level: str | None = None,
     ) -> RegisteredAgent:
         agent = self.require_agent(agent_id)
         membership = self.get_membership(task_id, agent_id) if task_id is not None else None
         delegation = self.get_delegation(delegation_id) if delegation_id is not None else None
+        if delegation_id is not None and delegation is None:
+            raise DelegationError(f"Delegation is not registered: {delegation_id}")
         AgentRegistryPolicy.ensure_can_participate(
             agent,
             task_id=task_id,
@@ -486,6 +557,7 @@ class AgentRegistryRepository:
             required_tool=required_tool,
             network=network,
             amount_lamports=amount_lamports,
+            risk_level=risk_level,
         )
         return agent
 
