@@ -536,6 +536,8 @@ CREATE TABLE policy_decisions (
 
 CREATE TABLE mvp_audit_logs (
   id TEXT PRIMARY KEY,
+  event_version INTEGER NOT NULL DEFAULT 1 CHECK (event_version > 0),
+  event_type TEXT NOT NULL DEFAULT 'STATE_CHANGE',
   actor TEXT NOT NULL,
   actor_type TEXT NOT NULL,
   action TEXT NOT NULL,
@@ -546,6 +548,15 @@ CREATE TABLE mvp_audit_logs (
   policy_result mvp_policy_result NOT NULL,
   reason TEXT NOT NULL,
   correlation_id TEXT NOT NULL,
+  transaction_id TEXT,
+  task_id TEXT,
+  run_id TEXT,
+  message_id TEXT,
+  payment_id TEXT,
+  ledger_entry_id TEXT,
+  evidence_hash TEXT,
+  event_hash TEXT CHECK (event_hash IS NULL OR length(event_hash) = 64),
+  previous_event_hash TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -569,8 +580,15 @@ CREATE TABLE mvp_outbox_events (
   aggregate_type TEXT NOT NULL,
   aggregate_id TEXT NOT NULL,
   event_type TEXT NOT NULL,
+  event_version INTEGER NOT NULL DEFAULT 1 CHECK (event_version > 0),
   idempotency_key TEXT NOT NULL UNIQUE,
   payload JSONB NOT NULL,
+  transaction_id TEXT,
+  delivery_status TEXT NOT NULL DEFAULT 'PENDING'
+    CHECK (delivery_status IN ('PENDING', 'IN_FLIGHT', 'PUBLISHED', 'FAILED')),
+  delivery_attempts INTEGER NOT NULL DEFAULT 0 CHECK (delivery_attempts >= 0),
+  last_error TEXT,
+  available_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   published_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -585,8 +603,12 @@ CREATE INDEX approval_requests_pending_idx ON approval_requests(created_at) WHER
 CREATE INDEX external_action_pending_idx ON external_action_requests(created_at) WHERE owner_decision IS NULL;
 CREATE INDEX mvp_audit_created_idx ON mvp_audit_logs(created_at DESC);
 CREATE INDEX mvp_audit_correlation_idx ON mvp_audit_logs(correlation_id);
+CREATE INDEX mvp_audit_task_created_idx ON mvp_audit_logs(task_id, created_at DESC);
+CREATE INDEX mvp_audit_target_created_idx ON mvp_audit_logs(target_type, target_id, created_at DESC);
+CREATE INDEX mvp_audit_event_type_idx ON mvp_audit_logs(event_type, created_at DESC);
 CREATE INDEX mvp_outbox_pending_idx ON mvp_outbox_events(created_at)
   WHERE published_at IS NULL;
+CREATE INDEX mvp_outbox_delivery_idx ON mvp_outbox_events(delivery_status, available_at, created_at);
 
 -- Audit records are append-only at the database boundary as well as in the
 -- application command boundary.

@@ -16,6 +16,16 @@ from dataclasses import asdict, dataclass
 from datetime import datetime
 from typing import Any, Callable, Iterator, Protocol
 
+from .audit import (
+    AUDIT_RECORD_COLUMNS,
+    AuditEvent,
+    AuditWriter,
+    OutboxEvent,
+    OutboxWriter,
+    ReplayResult,
+    replay_audit_events,
+)
+
 
 class RepositoryError(RuntimeError):
     """Base class for repository and transaction failures."""
@@ -158,6 +168,16 @@ class RepositoryTransaction:
             if close is not None:
                 close()
 
+    def _fetchall(self, statement: str, params: tuple[Any, ...] = ()) -> list[Any]:
+        cursor = self.connection.cursor()
+        try:
+            cursor.execute(statement, params)
+            return list(cursor.fetchall())
+        finally:
+            close = getattr(cursor, "close", None)
+            if close is not None:
+                close()
+
     def _claim_idempotency(self, command: TaskTransitionCommand) -> TaskTransitionResult | None:
         request_fingerprint = command.request_fingerprint()
         inserted = self._fetchone(
@@ -265,25 +285,24 @@ class RepositoryTransaction:
         before: TaskSnapshot,
         after: TaskSnapshot,
     ) -> None:
-        self.execute(
-            """
-            INSERT INTO mvp_audit_logs
-              (id, actor, actor_type, action, target_type, target_id,
-               before_state, after_state, policy_result, reason, correlation_id)
-            VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb,
-                    'ALLOW'::mvp_policy_result, %s, %s)
-            """,
-            (
-                command.audit_id,
-                command.actor_id,
-                command.actor_type,
-                "TRANSITION_TASK",
-                "TASK",
-                command.task_id,
-                json.dumps(asdict(before), default=str, sort_keys=True),
-                json.dumps(asdict(after), default=str, sort_keys=True),
-                command.reason,
-                command.correlation_id,
+        AuditWriter.append(
+            self,
+            AuditEvent(
+                event_id=command.audit_id,
+                event_version=1,
+                event_type="TASK_TRANSITION",
+                actor_id=command.actor_id,
+                actor_type=command.actor_type,
+                action="TRANSITION_TASK",
+                target_type="TASK",
+                target_id=command.task_id,
+                before_state=asdict(before),
+                after_state=asdict(after),
+                policy_result="ALLOW",
+                reason=command.reason,
+                correlation_id=command.correlation_id,
+                transaction_id=command.correlation_id,
+                task_id=command.task_id,
             ),
         )
 
@@ -293,26 +312,62 @@ class RepositoryTransaction:
         before: TaskSnapshot,
         after: TaskSnapshot,
     ) -> None:
-        payload = {
-            "task_id": command.task_id,
-            "before": asdict(before),
-            "after": asdict(after),
-            "actor_id": command.actor_id,
-            "correlation_id": command.correlation_id,
-        }
-        self.execute(
-            """
-            INSERT INTO mvp_outbox_events
-              (id, aggregate_type, aggregate_id, event_type, idempotency_key, payload)
-            VALUES (%s, 'TASK', %s, 'TASK_TRANSITION', %s, %s::jsonb)
-            """,
-            (
-                command.outbox_event_id,
-                command.task_id,
-                command.idempotency_key,
-                json.dumps(payload, default=str, sort_keys=True),
+        OutboxWriter.enqueue(
+            self,
+            OutboxEvent(
+                event_id=command.outbox_event_id,
+                aggregate_type="TASK",
+                aggregate_id=command.task_id,
+                event_type="TASK_TRANSITION",
+                idempotency_key=command.idempotency_key,
+                payload={
+                    "task_id": command.task_id,
+                    "before": asdict(before),
+                    "after": asdict(after),
+                    "actor_id": command.actor_id,
+                    "correlation_id": command.correlation_id,
+                },
+                event_version=1,
+                transaction_id=command.correlation_id,
             ),
         )
+
+    def list_audit_events(
+        self,
+        *,
+        task_id: str | None = None,
+        correlation_id: str | None = None,
+        limit: int = 200,
+    ) -> tuple[AuditEvent, ...]:
+        """Read ordered Audit events for inspection or safe replay."""
+
+        if limit < 1 or limit > 1000:
+            raise ValueError("limit must be between 1 and 1000")
+        predicates: list[str] = []
+        params: list[Any] = []
+        if task_id is not None:
+            predicates.append("task_id = %s")
+            params.append(task_id)
+        if correlation_id is not None:
+            predicates.append("correlation_id = %s")
+            params.append(correlation_id)
+        where = f"WHERE {' AND '.join(predicates)}" if predicates else ""
+        rows = self._fetchall(
+            f"""
+            SELECT {', '.join(AUDIT_RECORD_COLUMNS)}
+            FROM mvp_audit_logs
+            {where}
+            ORDER BY created_at ASC, id ASC
+            LIMIT %s
+            """,
+            (*params, limit),
+        )
+        return tuple(AuditEvent.from_record(row) for row in rows)
+
+    def replay_task(self, task_id: str, *, limit: int = 1000) -> ReplayResult:
+        """Reconstruct a task from Audit records without external effects."""
+
+        return replay_audit_events(self.list_audit_events(task_id=task_id, limit=limit))
 
     def _complete_idempotency(
         self, command: TaskTransitionCommand, result: TaskTransitionResult

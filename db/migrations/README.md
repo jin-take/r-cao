@@ -17,11 +17,14 @@ The runner creates `schema_migrations` and records each migration's SHA-256
 checksum. It applies a migration and its history row in one transaction. A
 checksum mismatch, unknown version, or out-of-order migration stops execution.
 
-`0001_phase1_foundation.sql` is the original Phase 1 relational schema and
+`0001_phase1_foundation.sql` is the original Phase 1 relational schema,
 `0002_owner_directed_mvp.sql` is the persistence contract introduced by the
-Owner-Directed MVP. `db/schema.sql` remains a review-friendly consolidated
-schema; future changes must be represented by a new migration and reflected in
-that consolidated file.
+Owner-Directed MVP, `0003_transaction_boundaries.sql` adds transactional
+command primitives, `0004_idempotency_request_fingerprint.sql` binds replay to
+the complete request, and `0005_audit_outbox_replay.sql` adds versioned Audit /
+Outbox metadata. `db/schema.sql` remains a review-friendly consolidated schema;
+future changes must be represented by a new migration and reflected in that
+consolidated file.
 
 The migrations do not create wallets, hold private keys, connect to mainnet, or
 move real assets.

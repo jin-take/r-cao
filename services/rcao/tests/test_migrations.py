@@ -55,6 +55,7 @@ def test_repository_migrations_are_ordered_and_cover_schema_layers() -> None:
         (2, "owner_directed_mvp"),
         (3, "transaction_boundaries"),
         (4, "idempotency_request_fingerprint"),
+        (5, "audit_outbox_replay"),
     ]
     assert "CREATE TABLE agents" in migrations[0].sql
     assert "CREATE TABLE mvp_tasks" in migrations[1].sql
@@ -62,6 +63,9 @@ def test_repository_migrations_are_ordered_and_cover_schema_layers() -> None:
     assert "ADD COLUMN IF NOT EXISTS request_fingerprint" in migrations[3].sql
     assert "ALTER COLUMN request_fingerprint SET NOT NULL" not in migrations[3].sql
     assert "legacy-unfingerprinted:" in migrations[3].sql
+    assert "ADD COLUMN IF NOT EXISTS event_hash" in migrations[4].sql
+    assert "delivery_status" in migrations[4].sql
+    assert "mvp_audit_task_created_idx" in migrations[4].sql
     assert all(len(item.checksum) == 64 for item in migrations)
 
 
