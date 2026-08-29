@@ -115,7 +115,7 @@ def test_agent_and_delegation_risk_scopes_are_enforced() -> None:
             agent(risk_scope={"max": "HIGH"}),
             task_id="T-001",
             membership=membership(),
-            delegation=delegation(risk_scope={"max": "LOW"}),
+            delegation=delegation(child_agent_id="agent-theo", risk_scope={"max": "LOW"}),
             action="REVIEW",
             risk_level="MEDIUM",
             now=NOW,
