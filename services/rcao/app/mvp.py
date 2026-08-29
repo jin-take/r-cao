@@ -1137,7 +1137,7 @@ class OwnerDirectedStore:
                 id="audit-alert-001",
                 actor="agent-iris",
                 actor_type=AgentType.AUDIT.value,
-                action="AUDIT_ALERT",
+                action="REWARD_APPROVAL_PENDING",
                 target_type="REWARD",
                 target_id="reward-001",
                 before={},
@@ -1280,7 +1280,7 @@ class OwnerDirectedStore:
                 "available_lamports": max(annual_budget - reserved, 0),
                 "mode": "VIRTUAL_LEDGER",
             },
-            "audit_alerts": sum(1 for item in self.audit_logs if item.policy_result is not PolicyResult.ALLOW),
+            "audit_alerts": sum(1 for item in self.audit_logs if item.policy_result is PolicyResult.DENY),
             "executive_agent_status": [
                 {
                     "id": agent.id,

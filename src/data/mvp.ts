@@ -332,7 +332,7 @@ export const mvpAuditLogs: MvpAuditLog[] = [
     id: "audit-alert-001",
     actor: "agent-iris",
     actorType: "AUDIT",
-    action: "AUDIT_ALERT",
+    action: "REWARD_APPROVAL_PENDING",
     targetType: "REWARD",
     targetId: "reward-001",
     before: {},
@@ -357,6 +357,18 @@ export const mvpAuditLogs: MvpAuditLog[] = [
     correlationId: "corr-task-001",
   },
 ];
+
+export function isBlockingAuditAlert(
+  log: Pick<MvpAuditLog, "policyResult">,
+): boolean {
+  return log.policyResult === "DENY";
+}
+
+export function isOwnerApprovalPending(
+  log: Pick<MvpAuditLog, "policyResult">,
+): boolean {
+  return log.policyResult === "OWNER_APPROVAL_REQUIRED";
+}
 
 export function formatSol(lamports: number): string {
   return `${(lamports / lamportsPerSol).toFixed(2)} SOL`;
