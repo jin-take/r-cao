@@ -17,6 +17,11 @@ The runner creates `schema_migrations` and records each migration's SHA-256
 checksum. It applies a migration and its history row in one transaction. A
 checksum mismatch, unknown version, or out-of-order migration stops execution.
 
+Migration `0007_task_workflow_acceptance_history.sql` records the initial and
+Owner-approved amendments to a Task's Acceptance Criteria. Task commands use
+this history together with the versioned Audit and Outbox records; changing the
+criteria is allowed only while the Task is still `DRAFT`.
+
 `0001_phase1_foundation.sql` is the original Phase 1 relational schema,
 `0002_owner_directed_mvp.sql` is the persistence contract introduced by the
 Owner-Directed MVP, `0003_transaction_boundaries.sql` adds transactional
