@@ -47,15 +47,17 @@ class FakeConnection:
         self.rollbacks += 1
 
 
-def test_repository_migrations_are_ordered_and_cover_both_schema_layers() -> None:
+def test_repository_migrations_are_ordered_and_cover_schema_layers() -> None:
     migrations = discover_migrations(Path("db/migrations"))
 
     assert [(item.version, item.name) for item in migrations] == [
         (1, "phase1_foundation"),
         (2, "owner_directed_mvp"),
+        (3, "transaction_boundaries"),
     ]
     assert "CREATE TABLE agents" in migrations[0].sql
     assert "CREATE TABLE mvp_tasks" in migrations[1].sql
+    assert "CREATE TABLE mvp_command_idempotency" in migrations[2].sql
     assert all(len(item.checksum) == 64 for item in migrations)
 
 
