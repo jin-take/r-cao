@@ -57,7 +57,7 @@ def test_repository_migrations_are_ordered_and_cover_schema_layers() -> None:
     ]
     assert "CREATE TABLE agents" in migrations[0].sql
     assert "CREATE TABLE mvp_tasks" in migrations[1].sql
-    assert "CREATE TABLE mvp_command_idempotency" in migrations[2].sql
+    assert "CREATE TABLE IF NOT EXISTS mvp_command_idempotency" in migrations[2].sql
     assert all(len(item.checksum) == 64 for item in migrations)
 
 
