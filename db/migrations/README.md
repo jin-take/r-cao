@@ -21,10 +21,11 @@ checksum mismatch, unknown version, or out-of-order migration stops execution.
 `0002_owner_directed_mvp.sql` is the persistence contract introduced by the
 Owner-Directed MVP, `0003_transaction_boundaries.sql` adds transactional
 command primitives, `0004_idempotency_request_fingerprint.sql` binds replay to
-the complete request, and `0005_audit_outbox_replay.sql` adds versioned Audit /
-Outbox metadata. `db/schema.sql` remains a review-friendly consolidated schema;
-future changes must be represented by a new migration and reflected in that
-consolidated file.
+the complete request, `0005_audit_outbox_replay.sql` adds versioned Audit /
+Outbox metadata, and `0006_agent_registry_capabilities.sql` adds the
+persistent Agent Registry and delegation relations. `db/schema.sql` remains a
+review-friendly consolidated schema; future changes must be represented by a
+new migration and reflected in that consolidated file.
 
 The migrations do not create wallets, hold private keys, connect to mainnet, or
 move real assets.

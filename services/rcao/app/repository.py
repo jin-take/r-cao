@@ -178,6 +178,16 @@ class RepositoryTransaction:
             if close is not None:
                 close()
 
+    def fetch_one(self, statement: str, params: tuple[Any, ...] = ()) -> Any:
+        """Read one row inside the current Unit of Work."""
+
+        return self._fetchone(statement, params)
+
+    def fetch_all(self, statement: str, params: tuple[Any, ...] = ()) -> list[Any]:
+        """Read rows inside the current Unit of Work."""
+
+        return self._fetchall(statement, params)
+
     def _claim_idempotency(self, command: TaskTransitionCommand) -> TaskTransitionResult | None:
         request_fingerprint = command.request_fingerprint()
         inserted = self._fetchone(
