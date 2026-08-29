@@ -14,13 +14,18 @@ import hashlib
 import os
 import re
 import sys
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
 
 
 MIGRATION_FILENAME = re.compile(r"^(?P<version>[0-9]{4})_(?P<name>[a-z0-9_]+)\.sql$")
-DEFAULT_MIGRATION_DIR = Path.cwd() / "db" / "migrations"
+REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
+DEFAULT_MIGRATION_DIR = REPOSITORY_ROOT / "db" / "migrations"
+# Stable namespace value for session-level PostgreSQL advisory locking. The
+# lock is held across each migration commit and released after the full run.
+MIGRATION_ADVISORY_LOCK_KEY = 0x5243414F4D494752
 
 
 class MigrationError(RuntimeError):
@@ -112,6 +117,28 @@ def _fetchall(connection: Any, statement: str) -> list[Any]:
             close()
 
 
+@contextmanager
+def migration_lock(connection: Any) -> Any:
+    """Serialize migration runners for the lifetime of their DB session."""
+
+    locked = False
+    try:
+        _execute(
+            connection,
+            "SELECT pg_advisory_lock(%s)",
+            (MIGRATION_ADVISORY_LOCK_KEY,),
+        )
+        locked = True
+        yield
+    finally:
+        if locked:
+            _execute(
+                connection,
+                "SELECT pg_advisory_unlock(%s)",
+                (MIGRATION_ADVISORY_LOCK_KEY,),
+            )
+
+
 def _row_value(row: Any, key: str, index: int) -> Any:
     if isinstance(row, dict):
         return row[key]
@@ -157,6 +184,60 @@ def _validate_applied(
             )
 
 
+def stamp_baseline(
+    connection: Any, directory: Path | str, version: int
+) -> tuple[AppliedMigration, ...]:
+    """Record an already-provisioned schema as applied through ``version``.
+
+    This is an explicit adoption path for databases initialized by the
+    consolidated ``db/schema.sql`` (or an equivalent previously managed
+    schema). It never executes migration SQL and therefore must only be used
+    after the operator has verified that the target schema already contains
+    every object represented by the selected migrations.
+    """
+
+    migrations = discover_migrations(directory)
+    selected = [migration for migration in migrations if migration.version <= version]
+    expected_versions = list(range(1, version + 1))
+    if version < 1 or [migration.version for migration in selected] != expected_versions:
+        raise MigrationError(
+            f"baseline version {version} is not a contiguous known migration history"
+        )
+
+    try:
+        with migration_lock(connection):
+            ensure_migration_table(connection)
+            connection.commit()
+            applied = load_applied_migrations(connection)
+            _validate_applied(migrations, applied)
+            if any(applied_version > version for applied_version in applied):
+                raise MigrationError(
+                    "cannot stamp an older baseline over newer applied migrations"
+                )
+
+            for migration in selected:
+                if migration.version in applied:
+                    continue
+                _execute(
+                    connection,
+                    """
+                    INSERT INTO schema_migrations (version, name, checksum)
+                    VALUES (%s, %s, %s)
+                    """,
+                    (migration.version, migration.name, migration.checksum),
+                )
+                applied[migration.version] = AppliedMigration(
+                    version=migration.version,
+                    name=migration.name,
+                    checksum=migration.checksum,
+                )
+            connection.commit()
+            return tuple(applied[applied_version] for applied_version in sorted(applied))
+    except BaseException:
+        connection.rollback()
+        raise
+
+
 def migrate(connection: Any, directory: Path | str) -> tuple[AppliedMigration, ...]:
     """Apply pending migrations and return the complete applied history.
 
@@ -167,48 +248,49 @@ def migrate(connection: Any, directory: Path | str) -> tuple[AppliedMigration, .
 
     migrations = discover_migrations(directory)
     try:
-        ensure_migration_table(connection)
-        connection.commit()
-        applied = load_applied_migrations(connection)
-        _validate_applied(migrations, applied)
+        with migration_lock(connection):
+            ensure_migration_table(connection)
+            connection.commit()
+            applied = load_applied_migrations(connection)
+            _validate_applied(migrations, applied)
 
-        last_version = max(applied, default=0)
-        for migration in migrations:
-            if migration.version in applied:
-                continue
-            if migration.version <= last_version:
-                raise MigrationError(
-                    f"migration {migration.version:04d} is out of order; "
-                    "add a new version above the current database version"
+            last_version = max(applied, default=0)
+            for migration in migrations:
+                if migration.version in applied:
+                    continue
+                if migration.version <= last_version:
+                    raise MigrationError(
+                        f"migration {migration.version:04d} is out of order; "
+                        "add a new version above the current database version"
+                    )
+
+                cursor = connection.cursor()
+                try:
+                    cursor.execute(migration.sql)
+                    cursor.execute(
+                        """
+                        INSERT INTO schema_migrations (version, name, checksum)
+                        VALUES (%s, %s, %s)
+                        """,
+                        (migration.version, migration.name, migration.checksum),
+                    )
+                    connection.commit()
+                except BaseException:
+                    connection.rollback()
+                    raise
+                finally:
+                    close = getattr(cursor, "close", None)
+                    if close is not None:
+                        close()
+
+                applied[migration.version] = AppliedMigration(
+                    version=migration.version,
+                    name=migration.name,
+                    checksum=migration.checksum,
                 )
+                last_version = migration.version
 
-            cursor = connection.cursor()
-            try:
-                cursor.execute(migration.sql)
-                cursor.execute(
-                    """
-                    INSERT INTO schema_migrations (version, name, checksum)
-                    VALUES (%s, %s, %s)
-                    """,
-                    (migration.version, migration.name, migration.checksum),
-                )
-                connection.commit()
-            except BaseException:
-                connection.rollback()
-                raise
-            finally:
-                close = getattr(cursor, "close", None)
-                if close is not None:
-                    close()
-
-            applied[migration.version] = AppliedMigration(
-                version=migration.version,
-                name=migration.name,
-                checksum=migration.checksum,
-            )
-            last_version = migration.version
-
-        return tuple(applied[version] for version in sorted(applied))
+            return tuple(applied[version] for version in sorted(applied))
     except BaseException:
         # The history-table setup can also fail (for example, because the
         # database is read-only). Do not leave an open transaction behind.
@@ -238,6 +320,14 @@ def main(argv: list[str] | None = None) -> int:
         "--database-url",
         default=os.environ.get("DATABASE_URL"),
     )
+    parser.add_argument(
+        "--baseline-version",
+        type=int,
+        help=(
+            "stamp an already-provisioned schema through this migration "
+            "version without executing migration SQL"
+        ),
+    )
     args = parser.parse_args(argv)
     if not args.database_url:
         parser.error("--database-url or DATABASE_URL is required")
@@ -245,8 +335,12 @@ def main(argv: list[str] | None = None) -> int:
     connection = None
     try:
         connection = _connect(args.database_url)
-        history = migrate(connection, args.directory)
-        print(f"applied migrations: {len(history)}")
+        if args.baseline_version is not None:
+            history = stamp_baseline(connection, args.directory, args.baseline_version)
+            print(f"stamped baseline through migration: {args.baseline_version:04d}")
+        else:
+            history = migrate(connection, args.directory)
+            print(f"applied migrations: {len(history)}")
         return 0
     except MigrationError as exc:
         print(f"migration failed: {exc}", file=sys.stderr)

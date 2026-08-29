@@ -13,6 +13,23 @@ DATABASE_URL=postgresql://rcao:rcao@localhost:5432/rcao \
   rcao-migrate --directory db/migrations
 ```
 
+## Existing database adoption
+
+The repository's `docker-compose.yml` initializes a database from the
+consolidated `db/schema.sql`. For such an existing database, first verify that
+the schema contains every object through the selected migration, then stamp
+the history without executing the migration SQL:
+
+```bash
+DATABASE_URL=postgresql://rcao:rcao@localhost:5432/rcao \
+  rcao-migrate --directory db/migrations --baseline-version 3
+```
+
+Baseline stamping is explicit and never performs automatic schema detection.
+Do not use it for a partially initialized or unverified database. It creates
+only missing `schema_migrations` history rows and does not delete or rewrite
+application data.
+
 The runner creates `schema_migrations` and records each migration's SHA-256
 checksum. It applies a migration and its history row in one transaction. A
 checksum mismatch, unknown version, or out-of-order migration stops execution.

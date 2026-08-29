@@ -209,6 +209,10 @@ npm ci
 python3 -m venv .venv
 .venv/bin/pip install -e 'services/rcao[dev]'
 
+# The compose initializer uses db/schema.sql. Stamp its equivalent migration
+# history before running the migration command against this existing database.
+.venv/bin/rcao-migrate --directory db/migrations --baseline-version 3
+
 npm run dev
 .venv/bin/uvicorn app.main:app --app-dir services/rcao --reload
 ```

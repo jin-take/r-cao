@@ -4,7 +4,13 @@ from pathlib import Path
 
 import pytest
 
-from app.migrations import MigrationError, discover_migrations, migrate
+from app.migrations import (
+    DEFAULT_MIGRATION_DIR,
+    MigrationError,
+    discover_migrations,
+    migrate,
+    stamp_baseline,
+)
 
 
 class FakeCursor:
@@ -47,8 +53,9 @@ class FakeConnection:
         self.rollbacks += 1
 
 
-def test_repository_migrations_are_ordered_and_cover_schema_layers() -> None:
-    migrations = discover_migrations(Path("db/migrations"))
+def test_repository_migrations_are_ordered_and_cover_schema_layers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    migrations = discover_migrations(DEFAULT_MIGRATION_DIR)
 
     assert [(item.version, item.name) for item in migrations] == [
         (1, "phase1_foundation"),
@@ -70,7 +77,9 @@ def test_migrate_is_idempotent_and_records_checksums(tmp_path: Path) -> None:
     second = migrate(connection, tmp_path)
 
     assert first == second
-    assert len(connection.statements) == statement_count + 2
+    assert len(connection.statements) == statement_count + 4
+    assert sum("pg_advisory_lock" in statement.lower() for statement, _ in connection.statements) == 2
+    assert sum("pg_advisory_unlock" in statement.lower() for statement, _ in connection.statements) == 2
     assert connection.applied[0][1] == "first"
     assert connection.commits >= 3
 
@@ -96,3 +105,17 @@ def test_failed_migration_is_rolled_back(tmp_path: Path) -> None:
 
     assert connection.applied == []
     assert connection.rollbacks >= 1
+
+
+def test_stamp_baseline_records_existing_schema_without_executing_sql() -> None:
+    connection = FakeConnection()
+
+    history = stamp_baseline(connection, DEFAULT_MIGRATION_DIR, 3)
+
+    assert [item.version for item in history] == [1, 2, 3]
+    assert connection.applied == [
+        (1, "phase1_foundation", history[0].checksum),
+        (2, "owner_directed_mvp", history[1].checksum),
+        (3, "transaction_boundaries", history[2].checksum),
+    ]
+    assert not any("CREATE TABLE agents" in statement for statement, _ in connection.statements)
