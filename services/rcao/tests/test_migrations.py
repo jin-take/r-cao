@@ -58,6 +58,7 @@ def test_repository_migrations_are_ordered_and_cover_schema_layers() -> None:
         (5, "audit_outbox_replay"),
         (6, "agent_registry_capabilities"),
         (7, "task_workflow_acceptance_history"),
+        (8, "virtual_ledger_treasury"),
     ]
     assert "CREATE TABLE agents" in migrations[0].sql
     assert "CREATE TABLE mvp_tasks" in migrations[1].sql
@@ -71,6 +72,10 @@ def test_repository_migrations_are_ordered_and_cover_schema_layers() -> None:
     assert "CREATE TABLE IF NOT EXISTS mvp_agent_memberships" in migrations[5].sql
     assert "CREATE TABLE IF NOT EXISTS mvp_agent_delegations" in migrations[5].sql
     assert "CREATE TABLE IF NOT EXISTS mvp_task_acceptance_history" in migrations[6].sql
+    assert "CREATE TABLE IF NOT EXISTS mvp_treasury_accounts" in migrations[7].sql
+    assert "CREATE TABLE IF NOT EXISTS mvp_virtual_ledger_entries" in migrations[7].sql
+    assert "CHECK (asset_type = 'VIRTUAL_REWARD')" in migrations[7].sql
+    assert "CHECK (currency = 'VIRTUAL')" in migrations[7].sql
     assert all(len(item.checksum) == 64 for item in migrations)
 
 

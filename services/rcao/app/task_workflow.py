@@ -43,6 +43,11 @@ from .mvp import (
     TaskStatus,
 )
 from .repository import PostgresRepository, RepositoryTransaction
+from .virtual_ledger import (
+    ReconciliationResult,
+    VirtualLedgerEntry,
+    VirtualLedgerRepository,
+)
 
 
 class TaskWorkflowError(ValueError):
@@ -1278,45 +1283,43 @@ class TaskWorkflowRepository:
                 budget = int(_row_value(allocation, "reward_budget_lamports", 3))
                 if amount < 0 or amount > budget:
                     raise WorkflowConflict("approved Reward exceeds its Task budget")
-                self.transaction.execute(
-                    """
-                    UPDATE reward_allocations
-                    SET approved_reward_lamports = %s,
-                        status = 'Approved'::mvp_reward_status,
-                        approved_by = %s,
-                        approved_at = now(),
-                        comment = %s
-                    WHERE id = %s
-                    """,
-                    (amount, actor.actor_id, comment, allocation_id),
+                ledger_entry = VirtualLedgerRepository(
+                    self.transaction,
+                    owner_id=self.owner_id,
+                ).reserve_reward(
+                    actor,
+                    allocation_id,
+                    amount,
+                    idempotency_key=f"{key}:reserve",
+                    calculation_version="owner-evaluation-v1",
+                    reason=comment or "Owner approved and reserved the virtual Reward",
                 )
-                self.transaction.execute(
-                    """
-                    INSERT INTO reward_ledger
-                      (id, allocation_id, task_id, agent_id, amount_lamports, status, recorded_by)
-                    VALUES (%s, %s, %s, %s, %s, 'Approved'::mvp_reward_status, %s)
-                    """,
-                    (
-                        str(uuid4()),
-                        allocation_id,
-                        task_id,
-                        str(_row_value(allocation, "agent_id", 2)),
-                        amount,
-                        actor.actor_id,
-                    ),
-                )
+                after = {
+                    "status": decision.value,
+                    "allocation_status": "Reserved",
+                    "reserved_reward_lamports": amount,
+                    "ledger_entry_id": ledger_entry.entry_id,
+                }
             elif decision is ApprovalDecision.REJECT:
-                self.transaction.execute(
-                    """
-                    UPDATE reward_allocations
-                    SET status = 'Cancelled'::mvp_reward_status, comment = %s
-                    WHERE id = %s
-                    """,
-                    (comment, allocation_id),
+                ledger_entry = VirtualLedgerRepository(
+                    self.transaction,
+                    owner_id=self.owner_id,
+                ).cancel_reward(
+                    actor,
+                    allocation_id,
+                    idempotency_key=f"{key}:cancel",
+                    reason=comment or "Owner rejected the proposed virtual Reward",
                 )
+                after = {
+                    "status": decision.value,
+                    "allocation_status": "Cancelled",
+                    "ledger_entry_id": ledger_entry.entry_id if ledger_entry else None,
+                }
+            else:
+                ledger_entry = None
+                after = {"status": decision.value, "comment": comment}
             target_type, target_id = "REWARD", allocation_id
             before = {"status": str(_row_value(allocation, "status", 5))}
-            after = {"status": decision.value, "comment": comment}
         else:
             raise WorkflowConflict("approval type is outside the persistent Task workflow")
 
@@ -1354,6 +1357,87 @@ class TaskWorkflowRepository:
         )
         self._complete_idempotency(key, updated_approval.model_dump(mode="json"))
         return updated_approval
+
+    def fund_treasury(
+        self,
+        actor: ActorContext,
+        amount_lamports: int,
+        *,
+        reason: str,
+        idempotency_key: str | None = None,
+    ) -> VirtualLedgerEntry:
+        """Fund the virtual Reward Treasury under the Owner command boundary."""
+
+        self._require_owner(actor)
+        key = idempotency_key or f"treasury-fund-{uuid4().hex}"
+        request = {"amount_lamports": amount_lamports, "reason": reason}
+        replay = self._claim_idempotency(
+            key=key,
+            command_name="FUND_VIRTUAL_TREASURY",
+            actor=actor,
+            request=request,
+        )
+        if replay is not None:
+            return VirtualLedgerEntry.from_payload(replay)
+        entry = VirtualLedgerRepository(
+            self.transaction,
+            owner_id=self.owner_id,
+        ).fund_treasury(
+            actor,
+            amount_lamports,
+            idempotency_key=f"{key}:entry",
+            reason=reason,
+        )
+        self._complete_idempotency(key, entry.to_payload())
+        return entry
+
+    def pay_reward(
+        self,
+        actor: ActorContext,
+        allocation_id: str,
+        *,
+        retention_bps: int = 0,
+        reason: str = "Owner released the approved virtual Reward",
+        idempotency_key: str | None = None,
+    ) -> VirtualLedgerEntry:
+        """Release a reserved Reward and record net payment plus retention."""
+
+        self._require_owner(actor)
+        key = idempotency_key or f"reward-pay-{uuid4().hex}"
+        request = {
+            "allocation_id": allocation_id,
+            "retention_bps": retention_bps,
+            "reason": reason,
+        }
+        replay = self._claim_idempotency(
+            key=key,
+            command_name="PAY_VIRTUAL_REWARD",
+            actor=actor,
+            request=request,
+        )
+        if replay is not None:
+            return VirtualLedgerEntry.from_payload(replay)
+        entry = VirtualLedgerRepository(
+            self.transaction,
+            owner_id=self.owner_id,
+        ).pay_reward(
+            actor,
+            allocation_id,
+            idempotency_key=f"{key}:entry",
+            retention_bps=retention_bps,
+            reason=reason,
+        )
+        self._complete_idempotency(key, entry.to_payload())
+        return entry
+
+    def reconcile_treasury(self, actor: ActorContext) -> ReconciliationResult:
+        """Recalculate Treasury balances and fail closed when they diverge."""
+
+        self._require_owner(actor)
+        return VirtualLedgerRepository(
+            self.transaction,
+            owner_id=self.owner_id,
+        ).assert_reconciled()
 
     def _has_owner_evaluation(self, task_id: str) -> bool:
         row = self.transaction.fetch_one(
@@ -1569,6 +1653,15 @@ class PersistentTaskWorkflow:
 
     def decide_approval(self, actor: ActorContext, approval_id: str, decision: ApprovalDecision, *, comment: str = "", reward_amount_lamports: int | None = None, idempotency_key: str | None = None) -> ApprovalRequest:
         return self._run(lambda tx: TaskWorkflowRepository(tx, owner_id=self.owner_id).decide_approval(actor, approval_id, decision, comment=comment, reward_amount_lamports=reward_amount_lamports, idempotency_key=idempotency_key))
+
+    def fund_treasury(self, actor: ActorContext, amount_lamports: int, *, reason: str, idempotency_key: str | None = None) -> VirtualLedgerEntry:
+        return self._run(lambda tx: TaskWorkflowRepository(tx, owner_id=self.owner_id).fund_treasury(actor, amount_lamports, reason=reason, idempotency_key=idempotency_key))
+
+    def pay_reward(self, actor: ActorContext, allocation_id: str, *, retention_bps: int = 0, reason: str = "Owner released the approved virtual Reward", idempotency_key: str | None = None) -> VirtualLedgerEntry:
+        return self._run(lambda tx: TaskWorkflowRepository(tx, owner_id=self.owner_id).pay_reward(actor, allocation_id, retention_bps=retention_bps, reason=reason, idempotency_key=idempotency_key))
+
+    def reconcile_treasury(self, actor: ActorContext) -> ReconciliationResult:
+        return self._run(lambda tx: TaskWorkflowRepository(tx, owner_id=self.owner_id).reconcile_treasury(actor))
 
 
 def postgres_task_workflow(database_url: str, *, owner_id: str = "owner-local") -> PersistentTaskWorkflow:

@@ -2,7 +2,7 @@ import os
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from .agent_runtime import runtime_integration_notes
 from .auth import (
@@ -51,6 +51,7 @@ from .task_workflow import (
     TaskWorkflowError,
     postgres_task_workflow,
 )
+from .virtual_ledger import VirtualLedgerError
 
 
 class HealthResponse(BaseModel):
@@ -69,6 +70,16 @@ class EvidenceCommand(BaseModel):
     sub_task_id: str
     uri: str
     content_hash: str | None = None
+
+
+class TreasuryFundingCommand(BaseModel):
+    amount_lamports: int = Field(gt=0)
+    reason: str = Field(min_length=1)
+
+
+class RewardPaymentCommand(BaseModel):
+    retention_bps: int = Field(default=0, ge=0, le=10_000)
+    reason: str = Field(default="Owner released the approved virtual Reward", min_length=1)
 
 
 app = FastAPI(
@@ -113,6 +124,11 @@ async def mvp_error(_, exc: MvpError) -> JSONResponse:
 
 @app.exception_handler(TaskWorkflowError)
 async def task_workflow_error(_, exc: TaskWorkflowError) -> JSONResponse:
+    return JSONResponse(status_code=400, content={"detail": str(exc)})
+
+
+@app.exception_handler(VirtualLedgerError)
+async def virtual_ledger_error(_, exc: VirtualLedgerError) -> JSONResponse:
     return JSONResponse(status_code=400, content={"detail": str(exc)})
 
 
@@ -404,6 +420,49 @@ def evaluate_persistent_task(
         command,
         idempotency_key=idempotency_key,
     )
+
+
+@app.post("/api/v1/commands/treasury/fund")
+def fund_persistent_treasury(
+    command: TreasuryFundingCommand,
+    actor: ActorContext = Depends(require_owner_actor),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> dict:
+    """Add virtual Reward capacity; this endpoint never moves real assets."""
+
+    return _require_persistent_workflow().fund_treasury(
+        actor,
+        command.amount_lamports,
+        reason=command.reason,
+        idempotency_key=idempotency_key,
+    ).to_payload()
+
+
+@app.get("/api/v1/ledger/reconcile")
+def reconcile_persistent_treasury(
+    actor: ActorContext = Depends(require_owner_actor),
+) -> dict:
+    """Recalculate the virtual Treasury and fail closed on an invariant break."""
+
+    return _require_persistent_workflow().reconcile_treasury(actor).to_payload()
+
+
+@app.post("/api/v1/commands/rewards/{allocation_id}/pay")
+def pay_persistent_reward(
+    allocation_id: str,
+    command: RewardPaymentCommand,
+    actor: ActorContext = Depends(require_owner_actor),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> dict:
+    """Release a reserved virtual Reward after explicit Owner approval."""
+
+    return _require_persistent_workflow().pay_reward(
+        actor,
+        allocation_id,
+        retention_bps=command.retention_bps,
+        reason=command.reason,
+        idempotency_key=idempotency_key,
+    ).to_payload()
 
 
 @app.get("/api/v1/approvals", response_model=list[ApprovalRequest])
