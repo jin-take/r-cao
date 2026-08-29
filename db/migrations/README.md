@@ -1,0 +1,27 @@
+# R-CAO PostgreSQL migrations
+
+The SQL files in this directory are the executable schema history for the
+Control Plane. They are ordered by the four-digit prefix and are applied by
+`app.migrations`. Once a migration has been applied, do not edit it; add a new
+forward migration instead.
+
+## Local usage
+
+```bash
+python -m pip install -e 'services/rcao[postgres]'
+DATABASE_URL=postgresql://rcao:rcao@localhost:5432/rcao \
+  rcao-migrate --directory db/migrations
+```
+
+The runner creates `schema_migrations` and records each migration's SHA-256
+checksum. It applies a migration and its history row in one transaction. A
+checksum mismatch, unknown version, or out-of-order migration stops execution.
+
+`0001_phase1_foundation.sql` is the original Phase 1 relational schema and
+`0002_owner_directed_mvp.sql` is the persistence contract introduced by the
+Owner-Directed MVP. `db/schema.sql` remains a review-friendly consolidated
+schema; future changes must be represented by a new migration and reflected in
+that consolidated file.
+
+The migrations do not create wallets, hold private keys, connect to mainnet, or
+move real assets.
