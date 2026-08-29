@@ -21,9 +21,14 @@ class FakeCursor:
     def execute(self, statement: str, params: tuple[object, ...] = ()) -> None:
         self.connection.statements.append((statement, params))
         normalized = " ".join(statement.split()).lower()
+        if "pg_advisory_unlock" in normalized and self.connection.transaction_failed:
+            raise RuntimeError("cannot unlock failed transaction")
         if normalized.startswith("select version, name, checksum"):
             self.rows = list(self.connection.applied)
         elif normalized.startswith("insert into schema_migrations"):
+            if self.connection.fail_on_history_insert:
+                self.connection.transaction_failed = True
+                raise RuntimeError("history insert failure")
             version, name, checksum = params
             self.connection.applied.append((int(version), str(name), str(checksum)))
         elif "raise migration failure" in normalized:
@@ -42,15 +47,19 @@ class FakeConnection:
         self.statements: list[tuple[str, tuple[object, ...]]] = []
         self.commits = 0
         self.rollbacks = 0
+        self.transaction_failed = False
+        self.fail_on_history_insert = False
 
     def cursor(self) -> FakeCursor:
         return FakeCursor(self)
 
     def commit(self) -> None:
         self.commits += 1
+        self.transaction_failed = False
 
     def rollback(self) -> None:
         self.rollbacks += 1
+        self.transaction_failed = False
 
 
 def test_repository_migrations_are_ordered_and_cover_schema_layers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -105,6 +114,23 @@ def test_failed_migration_is_rolled_back(tmp_path: Path) -> None:
 
     assert connection.applied == []
     assert connection.rollbacks >= 1
+
+
+def test_failed_baseline_rolls_back_before_unlocking(tmp_path: Path) -> None:
+    (tmp_path / "0001_first.sql").write_text("CREATE TABLE first (id integer);", encoding="utf-8")
+    connection = FakeConnection()
+    connection.fail_on_history_insert = True
+
+    with pytest.raises(RuntimeError, match="history insert failure"):
+        stamp_baseline(connection, tmp_path, 1)
+
+    assert connection.rollbacks >= 1
+    unlocks = [
+        statement
+        for statement, _ in connection.statements
+        if "pg_advisory_unlock" in statement.lower()
+    ]
+    assert unlocks
 
 
 def test_stamp_baseline_records_existing_schema_without_executing_sql() -> None:

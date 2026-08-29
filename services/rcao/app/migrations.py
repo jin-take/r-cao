@@ -122,6 +122,7 @@ def migration_lock(connection: Any) -> Any:
     """Serialize migration runners for the lifetime of their DB session."""
 
     locked = False
+    failed = False
     try:
         _execute(
             connection,
@@ -130,13 +131,31 @@ def migration_lock(connection: Any) -> Any:
         )
         locked = True
         yield
+    except BaseException:
+        # A DB-API connection can remain in an aborted transaction after an
+        # operation fails.  Roll it back before issuing pg_advisory_unlock;
+        # otherwise PostgreSQL rejects the unlock and hides the real error.
+        failed = True
+        try:
+            connection.rollback()
+        except BaseException:
+            # Preserve the original migration failure.  The outer migration
+            # boundary will make a best-effort rollback as well.
+            pass
+        raise
     finally:
         if locked:
-            _execute(
-                connection,
-                "SELECT pg_advisory_unlock(%s)",
-                (MIGRATION_ADVISORY_LOCK_KEY,),
-            )
+            try:
+                _execute(
+                    connection,
+                    "SELECT pg_advisory_unlock(%s)",
+                    (MIGRATION_ADVISORY_LOCK_KEY,),
+                )
+            except BaseException:
+                # Never replace the exception raised by the migration body
+                # with a cleanup error from the unlock operation.
+                if not failed:
+                    raise
 
 
 def _row_value(row: Any, key: str, index: int) -> Any:
