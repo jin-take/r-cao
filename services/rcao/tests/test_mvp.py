@@ -94,6 +94,7 @@ def test_seed_contains_six_named_executives_and_mvp_pending_items() -> None:
     approval_log = next(item for item in store.audit_logs if item.target_id == "reward-001")
     assert approval_log.action == "REWARD_APPROVAL_PENDING"
     assert approval_log.policy_result is not PolicyResult.DENY
+    assert store.dashboard()["audit_alerts"] == 0
 
 
 def test_only_owner_can_create_task_and_reward_budget_is_not_paid() -> None:
