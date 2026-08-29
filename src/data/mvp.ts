@@ -370,6 +370,20 @@ export function isOwnerApprovalPending(
   return approval.ownerDecision === null;
 }
 
+export function resolveRewardApproval(
+  approvals: MvpApproval[],
+  rewardId: string,
+  comment: string,
+): MvpApproval[] {
+  return approvals.map((approval) =>
+    approval.approvalType === "REWARD" &&
+    approval.targetId === rewardId &&
+    approval.ownerDecision === null
+      ? { ...approval, ownerDecision: "APPROVE", comment }
+      : approval,
+  );
+}
+
 export function formatSol(lamports: number): string {
   return `${(lamports / lamportsPerSol).toFixed(2)} SOL`;
 }
