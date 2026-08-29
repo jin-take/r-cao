@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useMvp } from "@/app/mvp-context";
-import { formatSol } from "@/data/mvp";
+import { formatSol, isBlockingAuditAlert, isOwnerApprovalPending } from "@/data/mvp";
 
 export default function DashboardPage() {
   const { agents, tasks, approvals, rewards, proposals, externalActions, auditLogs } = useMvp();
@@ -10,6 +10,8 @@ export default function DashboardPage() {
   const reservedBudget = activeTasks.reduce((total, task) => total + task.rewardBudgetLamports, 0);
   const pendingRewards = rewards.filter((reward) => ["Pending", "Proposed", "Reserved"].includes(reward.status));
   const pendingExternal = externalActions.filter((item) => !item.ownerDecision);
+  const auditAlerts = auditLogs.filter(isBlockingAuditAlert);
+  const auditApprovals = auditLogs.filter(isOwnerApprovalPending);
 
   return (
     <section className="shell">
@@ -60,7 +62,7 @@ export default function DashboardPage() {
         <Link className="summary-card" href="/approvals"><span>Owner Approval Pending</span><strong>{approvals.filter((item) => !item.ownerDecision).length}</strong><small>Task / Reward / Proposal / External</small></Link>
         <Link className="summary-card" href="/rewards"><span>Reward Approval Pending</span><strong>{pendingRewards.length}</strong><small>Budget {formatSol(reservedBudget)}</small></Link>
         <Link className="summary-card" href="/proposals"><span>Board Proposals</span><strong>{proposals.filter((item) => !item.ownerDecision).length}</strong><small>Owner decision required</small></Link>
-        <Link className="summary-card" href="/audit"><span>Audit Alerts</span><strong>{auditLogs.filter((item) => item.policyResult !== "ALLOW").length}</strong><small>{pendingExternal.length} external request pending</small></Link>
+        <Link className="summary-card" href="/audit"><span>Audit Alerts</span><strong>{auditAlerts.length}</strong><small>{auditApprovals.length} owner approval pending · {pendingExternal.length} external request pending</small></Link>
       </div>
 
       <p className="notice"><b>Safety boundary:</b> このMVPはVirtual LedgerとOff-chain業務サイクルのみを扱います。実SOL送金、Wallet接続、DeFi、Validator、外部送信、Agent間Reward Transferはありません。</p>
