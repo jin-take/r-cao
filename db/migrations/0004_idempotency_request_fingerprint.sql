@@ -9,5 +9,7 @@ UPDATE mvp_command_idempotency
 SET request_fingerprint = 'legacy-unfingerprinted:' || idempotency_key
 WHERE request_fingerprint IS NULL;
 
-ALTER TABLE mvp_command_idempotency
-  ALTER COLUMN request_fingerprint SET NOT NULL;
+-- Keep the column nullable while older application instances may still write
+-- rows without the new field during a rolling deployment. The repository
+-- rejects NULL and legacy sentinel values for replay; a later cleanup
+-- migration may enforce NOT NULL after the old writer is retired.

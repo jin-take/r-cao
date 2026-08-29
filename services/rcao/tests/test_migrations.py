@@ -60,7 +60,8 @@ def test_repository_migrations_are_ordered_and_cover_schema_layers() -> None:
     assert "CREATE TABLE mvp_tasks" in migrations[1].sql
     assert "CREATE TABLE IF NOT EXISTS mvp_command_idempotency" in migrations[2].sql
     assert "ADD COLUMN IF NOT EXISTS request_fingerprint" in migrations[3].sql
-    assert "ALTER COLUMN request_fingerprint SET NOT NULL" in migrations[3].sql
+    assert "ALTER COLUMN request_fingerprint SET NOT NULL" not in migrations[3].sql
+    assert "legacy-unfingerprinted:" in migrations[3].sql
     assert all(len(item.checksum) == 64 for item in migrations)
 
 

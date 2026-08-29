@@ -555,7 +555,9 @@ CREATE TABLE mvp_command_idempotency (
   idempotency_key TEXT PRIMARY KEY,
   command_name TEXT NOT NULL,
   actor_id TEXT NOT NULL,
-  request_fingerprint TEXT NOT NULL,
+  -- Nullable for rolling upgrades; new writers always provide a fingerprint
+  -- and legacy rows are not eligible for replay.
+  request_fingerprint TEXT,
   response JSONB,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   completed_at TIMESTAMPTZ,
