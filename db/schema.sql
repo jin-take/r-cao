@@ -357,6 +357,7 @@ CREATE TABLE mvp_tasks (
   external_action_allowed BOOLEAN NOT NULL DEFAULT FALSE,
   owner_approval_required BOOLEAN NOT NULL DEFAULT TRUE,
   status mvp_task_status NOT NULL DEFAULT 'DRAFT',
+  version INTEGER NOT NULL DEFAULT 1 CHECK (version > 0),
   progress SMALLINT NOT NULL DEFAULT 0 CHECK (progress BETWEEN 0 AND 100),
   created_by TEXT NOT NULL REFERENCES owners(id),
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -534,7 +535,7 @@ CREATE TABLE policy_decisions (
 );
 
 CREATE TABLE mvp_audit_logs (
-  id UUID PRIMARY KEY,
+  id TEXT PRIMARY KEY,
   actor TEXT NOT NULL,
   actor_type TEXT NOT NULL,
   action TEXT NOT NULL,
@@ -548,6 +549,29 @@ CREATE TABLE mvp_audit_logs (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- Command idempotency and the MVP outbox use TEXT aggregate IDs because the
+-- Owner-Directed MVP identifiers (for example, T-001) are not UUIDs.
+CREATE TABLE mvp_command_idempotency (
+  idempotency_key TEXT PRIMARY KEY,
+  command_name TEXT NOT NULL,
+  actor_id TEXT NOT NULL,
+  response JSONB,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  completed_at TIMESTAMPTZ,
+  CHECK ((response IS NULL) = (completed_at IS NULL))
+);
+
+CREATE TABLE mvp_outbox_events (
+  id TEXT PRIMARY KEY,
+  aggregate_type TEXT NOT NULL,
+  aggregate_id TEXT NOT NULL,
+  event_type TEXT NOT NULL,
+  idempotency_key TEXT NOT NULL UNIQUE,
+  payload JSONB NOT NULL,
+  published_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 CREATE INDEX mvp_tasks_status_idx ON mvp_tasks(status);
 CREATE INDEX mvp_tasks_executive_idx ON mvp_tasks(assigned_executive_agent_id);
 CREATE INDEX mvp_sub_tasks_parent_idx ON mvp_sub_tasks(parent_task_id);
@@ -558,6 +582,8 @@ CREATE INDEX approval_requests_pending_idx ON approval_requests(created_at) WHER
 CREATE INDEX external_action_pending_idx ON external_action_requests(created_at) WHERE owner_decision IS NULL;
 CREATE INDEX mvp_audit_created_idx ON mvp_audit_logs(created_at DESC);
 CREATE INDEX mvp_audit_correlation_idx ON mvp_audit_logs(correlation_id);
+CREATE INDEX mvp_outbox_pending_idx ON mvp_outbox_events(created_at)
+  WHERE published_at IS NULL;
 
 -- Audit records are append-only at the database boundary as well as in the
 -- application command boundary.
