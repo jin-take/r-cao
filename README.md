@@ -98,7 +98,7 @@ npm run typecheck
 npm run build
 
 python3 -m venv .venv
-.venv/bin/pip install -e 'services/rcao[dev]'
+.venv/bin/pip install -e 'services/rcao[dev,postgres]'
 .venv/bin/pytest -q services/rcao/tests
 ```
 
@@ -207,7 +207,16 @@ cp .env.example .env
 docker compose up -d postgres
 npm ci
 python3 -m venv .venv
-.venv/bin/pip install -e 'services/rcao[dev]'
+.venv/bin/pip install -e 'services/rcao[dev,postgres]'
+
+# Load DATABASE_URL from the local environment before using rcao-migrate.
+set -a
+. ./.env
+set +a
+
+# The compose initializer uses db/schema.sql. Stamp its equivalent migration
+# history before running the migration command against this existing database.
+.venv/bin/rcao-migrate --directory db/migrations --baseline-version 3
 
 npm run dev
 .venv/bin/uvicorn app.main:app --app-dir services/rcao --reload
