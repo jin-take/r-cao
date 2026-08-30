@@ -64,6 +64,7 @@ class TaskTransitionCommand:
     idempotency_key: str
     audit_id: str
     outbox_event_id: str
+    risk_level: str | None = None
 
     def __post_init__(self) -> None:
         if not self.task_id:
@@ -177,6 +178,16 @@ class RepositoryTransaction:
             close = getattr(cursor, "close", None)
             if close is not None:
                 close()
+
+    def fetch_one(self, statement: str, params: tuple[Any, ...] = ()) -> Any:
+        """Read one row inside the current Unit of Work."""
+
+        return self._fetchone(statement, params)
+
+    def fetch_all(self, statement: str, params: tuple[Any, ...] = ()) -> list[Any]:
+        """Read rows inside the current Unit of Work."""
+
+        return self._fetchall(statement, params)
 
     def _claim_idempotency(self, command: TaskTransitionCommand) -> TaskTransitionResult | None:
         request_fingerprint = command.request_fingerprint()
@@ -402,6 +413,22 @@ class RepositoryTransaction:
 
     def transition_task(self, command: TaskTransitionCommand) -> TaskTransitionResult:
         """Update a task and append its audit/outbox records atomically."""
+
+        if command.actor_type.upper() == "AGENT":
+            if command.risk_level is None:
+                raise ValueError("risk_level is required for Agent Task actions")
+            # Keep the persistent execution path behind the canonical Agent
+            # Registry.  The import is local so the repository's low-level
+            # contracts remain importable without introducing a module cycle.
+            from .agent_registry import AgentRegistryRepository
+
+            AgentRegistryRepository(self).ensure_can_participate(
+                command.actor_id,
+                task_id=command.task_id,
+                action="TRANSITION_TASK",
+                amount_lamports=0,
+                risk_level=command.risk_level,
+            )
 
         replay = self._claim_idempotency(command)
         if replay is not None:

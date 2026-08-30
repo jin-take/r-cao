@@ -72,6 +72,7 @@ def test_repository_migrations_are_ordered_and_cover_schema_layers(tmp_path: Pat
         (3, "transaction_boundaries"),
         (4, "idempotency_request_fingerprint"),
         (5, "audit_outbox_replay"),
+        (6, "agent_registry_capabilities"),
     ]
     assert "CREATE TABLE agents" in migrations[0].sql
     assert "CREATE TABLE mvp_tasks" in migrations[1].sql
@@ -83,6 +84,8 @@ def test_repository_migrations_are_ordered_and_cover_schema_layers(tmp_path: Pat
     assert "delivery_status" in migrations[4].sql
     assert "SET delivery_status = 'PUBLISHED'" in migrations[4].sql
     assert "mvp_audit_task_created_idx" in migrations[4].sql
+    assert "CREATE TABLE IF NOT EXISTS mvp_agent_memberships" in migrations[5].sql
+    assert "CREATE TABLE IF NOT EXISTS mvp_agent_delegations" in migrations[5].sql
     assert all(len(item.checksum) == 64 for item in migrations)
 
 
