@@ -365,9 +365,23 @@ export function isBlockingAuditAlert(
 }
 
 export function isOwnerApprovalPending(
-  log: Pick<MvpAuditLog, "policyResult">,
+  approval: Pick<MvpApproval, "ownerDecision">,
 ): boolean {
-  return log.policyResult === "OWNER_APPROVAL_REQUIRED";
+  return approval.ownerDecision === null;
+}
+
+export function resolveRewardApproval(
+  approvals: MvpApproval[],
+  rewardId: string,
+  comment: string,
+): MvpApproval[] {
+  return approvals.map((approval) =>
+    approval.approvalType === "REWARD" &&
+    approval.targetId === rewardId &&
+    approval.ownerDecision === null
+      ? { ...approval, ownerDecision: "APPROVE", comment }
+      : approval,
+  );
 }
 
 export function formatSol(lamports: number): string {

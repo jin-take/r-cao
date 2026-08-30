@@ -11,7 +11,7 @@ export default function DashboardPage() {
   const pendingRewards = rewards.filter((reward) => ["Pending", "Proposed", "Reserved"].includes(reward.status));
   const pendingExternal = externalActions.filter((item) => !item.ownerDecision);
   const auditAlerts = auditLogs.filter(isBlockingAuditAlert);
-  const auditApprovals = auditLogs.filter(isOwnerApprovalPending);
+  const auditApprovals = approvals.filter(isOwnerApprovalPending);
 
   return (
     <section className="shell">
