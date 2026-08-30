@@ -25,19 +25,25 @@ class FakeCursor:
         self.rows = []
 
         if normalized.startswith("insert into mvp_command_idempotency"):
-            key, command_name, actor_id = params
+            key, command_name, actor_id, request_fingerprint = params
             if key not in self.connection.idempotency:
                 self.connection.idempotency[str(key)] = {
                     "command_name": str(command_name),
                     "actor_id": str(actor_id),
+                    "request_fingerprint": str(request_fingerprint),
                     "response": None,
                 }
                 self.rows = [(key,)]
-        elif normalized.startswith("select command_name, actor_id, response"):
+        elif normalized.startswith("select command_name, actor_id, request_fingerprint, response"):
             record = self.connection.idempotency.get(str(params[0]))
             if record:
                 self.rows = [
-                    (record["command_name"], record["actor_id"], record["response"])
+                    (
+                        record["command_name"],
+                        record["actor_id"],
+                        record["request_fingerprint"],
+                        record["response"],
+                    )
                 ]
         elif normalized.startswith("select id, status, progress, version, updated_at"):
             task = self.connection.tasks.get(str(params[0]))
@@ -194,6 +200,16 @@ def test_idempotency_key_cannot_change_actor() -> None:
     repository = PostgresRepository(lambda: connection)
     repository.transition_task(command())
     conflicting = replace(command(), actor_id="agent-theo")
+
+    with pytest.raises(IdempotencyConflictError):
+        repository.transition_task(conflicting)
+
+
+def test_idempotency_key_cannot_change_request() -> None:
+    connection = FakeConnection()
+    repository = PostgresRepository(lambda: connection)
+    repository.transition_task(command())
+    conflicting = replace(command(), progress=99)
 
     with pytest.raises(IdempotencyConflictError):
         repository.transition_task(conflicting)

@@ -70,10 +70,14 @@ def test_repository_migrations_are_ordered_and_cover_schema_layers(tmp_path: Pat
         (1, "phase1_foundation"),
         (2, "owner_directed_mvp"),
         (3, "transaction_boundaries"),
+        (4, "idempotency_request_fingerprint"),
     ]
     assert "CREATE TABLE agents" in migrations[0].sql
     assert "CREATE TABLE mvp_tasks" in migrations[1].sql
     assert "CREATE TABLE IF NOT EXISTS mvp_command_idempotency" in migrations[2].sql
+    assert "ADD COLUMN IF NOT EXISTS request_fingerprint" in migrations[3].sql
+    assert "ALTER COLUMN request_fingerprint SET NOT NULL" not in migrations[3].sql
+    assert "legacy-unfingerprinted:" in migrations[3].sql
     assert all(len(item.checksum) == 64 for item in migrations)
 
 
