@@ -1,9 +1,10 @@
 import os
 
-from fastapi import Depends, FastAPI, Query
+from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
+from .agent_registry import AgentRegistryError
 from .agent_runtime import runtime_integration_notes
 from .auth import (
     ActorContext,
@@ -46,6 +47,11 @@ from .mvp import (
     TaskStatusCommand,
 )
 from .search import InMemoryOperationSearch, SearchQuery, SearchResponse, SearchScope
+from .task_workflow import (
+    PersistentTaskWorkflow,
+    TaskWorkflowError,
+    postgres_task_workflow,
+)
 
 
 class HealthResponse(BaseModel):
@@ -53,6 +59,17 @@ class HealthResponse(BaseModel):
     phase: int
     ledger: str
     status: str
+
+
+class AcceptanceCriteriaCommand(BaseModel):
+    acceptance_criteria: list[str]
+    reason: str
+
+
+class EvidenceCommand(BaseModel):
+    sub_task_id: str
+    uri: str
+    content_hash: str | None = None
 
 
 app = FastAPI(
@@ -68,6 +85,23 @@ mvp_store = OwnerDirectedStore(
 )
 
 
+def _persistent_workflow_from_environment() -> PersistentTaskWorkflow | None:
+    """Enable durable command routes only when explicitly selected."""
+
+    if os.getenv("RCAO_TASK_BACKEND", "memory").lower() != "postgres":
+        return None
+    database_url = os.getenv("DATABASE_URL")
+    if not database_url:
+        raise RuntimeError("DATABASE_URL is required when RCAO_TASK_BACKEND=postgres")
+    return postgres_task_workflow(
+        database_url,
+        owner_id=os.getenv("RCAO_OWNER_ID", "owner-local"),
+    )
+
+
+persistent_task_workflow = _persistent_workflow_from_environment()
+
+
 @app.exception_handler(MvpAuthorizationError)
 async def mvp_authorization_error(_, exc: MvpAuthorizationError) -> JSONResponse:
     return JSONResponse(status_code=403, content={"detail": str(exc)})
@@ -76,6 +110,18 @@ async def mvp_authorization_error(_, exc: MvpAuthorizationError) -> JSONResponse
 @app.exception_handler(MvpError)
 async def mvp_error(_, exc: MvpError) -> JSONResponse:
     return JSONResponse(status_code=400, content={"detail": str(exc)})
+
+
+@app.exception_handler(TaskWorkflowError)
+async def task_workflow_error(_, exc: TaskWorkflowError) -> JSONResponse:
+    return JSONResponse(status_code=400, content={"detail": str(exc)})
+
+
+@app.exception_handler(AgentRegistryError)
+async def agent_registry_error(_, exc: AgentRegistryError) -> JSONResponse:
+    """Turn Registry authorization failures into controlled API responses."""
+
+    return JSONResponse(status_code=403, content={"detail": str(exc)})
 
 
 @app.get("/health", response_model=HealthResponse)
@@ -211,6 +257,139 @@ def record_audit(
     return mvp_store.record_audit(actor, task_id, command)
 
 
+def _require_persistent_workflow() -> PersistentTaskWorkflow:
+    if persistent_task_workflow is None:
+        raise HTTPException(
+            status_code=503,
+            detail="persistent Task workflow is disabled; set RCAO_TASK_BACKEND=postgres",
+        )
+    return persistent_task_workflow
+
+
+@app.post("/api/v1/commands/tasks", response_model=TaskRecord)
+def create_persistent_task(
+    command: TaskCreateCommand,
+    actor: ActorContext = Depends(require_owner_actor),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> TaskRecord:
+    """Create a durable Owner Task when the PostgreSQL backend is selected."""
+
+    return _require_persistent_workflow().create_task(
+        actor,
+        command,
+        idempotency_key=idempotency_key,
+    )
+
+
+@app.post("/api/v1/commands/tasks/{task_id}/acceptance-criteria", response_model=TaskRecord)
+def update_persistent_acceptance_criteria(
+    task_id: str,
+    command: AcceptanceCriteriaCommand,
+    actor: ActorContext = Depends(require_owner_actor),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> TaskRecord:
+    return _require_persistent_workflow().update_acceptance_criteria(
+        actor,
+        task_id,
+        command.acceptance_criteria,
+        reason=command.reason,
+        idempotency_key=idempotency_key,
+    )
+
+
+@app.post("/api/v1/commands/tasks/{task_id}/assign", response_model=TaskRecord)
+def assign_persistent_executive(
+    task_id: str,
+    command: AssignExecutiveCommand,
+    actor: ActorContext = Depends(require_owner_actor),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> TaskRecord:
+    return _require_persistent_workflow().assign_executive(
+        actor,
+        task_id,
+        command.executive_agent_id,
+        idempotency_key=idempotency_key,
+    )
+
+
+@app.post("/api/v1/commands/tasks/{task_id}/subtasks", response_model=SubTaskRecord)
+def create_persistent_subtask(
+    task_id: str,
+    command: SubTaskCreateCommand,
+    actor: ActorContext = Depends(require_actor),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> SubTaskRecord:
+    return _require_persistent_workflow().create_subtask(
+        actor,
+        task_id,
+        command,
+        idempotency_key=idempotency_key,
+    )
+
+
+@app.post("/api/v1/commands/tasks/{task_id}/status", response_model=TaskRecord)
+def transition_persistent_task(
+    task_id: str,
+    command: TaskStatusCommand,
+    actor: ActorContext = Depends(require_actor),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> TaskRecord:
+    return _require_persistent_workflow().transition_task(
+        actor,
+        task_id,
+        command.status,
+        reason=command.reason,
+        idempotency_key=idempotency_key,
+    )
+
+
+@app.post("/api/v1/commands/tasks/{task_id}/evidence", response_model=SubTaskRecord)
+def submit_persistent_evidence(
+    task_id: str,
+    command: EvidenceCommand,
+    actor: ActorContext = Depends(require_actor),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> SubTaskRecord:
+    return _require_persistent_workflow().submit_evidence(
+        actor,
+        task_id,
+        command.sub_task_id,
+        command.uri,
+        content_hash=command.content_hash,
+        idempotency_key=idempotency_key,
+    )
+
+
+@app.post("/api/v1/commands/tasks/{task_id}/review", response_model=ReviewRecord)
+def submit_persistent_review(
+    task_id: str,
+    command: ReviewCommand,
+    actor: ActorContext = Depends(require_actor),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> ReviewRecord:
+    return _require_persistent_workflow().submit_review(
+        actor,
+        task_id,
+        command,
+        idempotency_key=idempotency_key,
+    )
+
+
+@app.post("/api/v1/commands/tasks/{task_id}/audit", response_model=AuditRecord)
+def record_persistent_audit(
+    task_id: str,
+    command: AuditCommand,
+    actor: ActorContext = Depends(require_actor),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> AuditRecord:
+    return _require_persistent_workflow().record_audit(
+        actor,
+        task_id,
+        command,
+        idempotency_key=idempotency_key,
+    )
+
+
 @app.post("/api/v1/tasks/{task_id}/evaluation", response_model=OwnerEvaluation)
 def evaluate_task(
     task_id: str,
@@ -218,6 +397,21 @@ def evaluate_task(
     actor: ActorContext = Depends(require_owner_actor),
 ) -> OwnerEvaluation:
     return mvp_store.evaluate_task(actor, task_id, command)
+
+
+@app.post("/api/v1/commands/tasks/{task_id}/evaluation", response_model=OwnerEvaluation)
+def evaluate_persistent_task(
+    task_id: str,
+    command: OwnerEvaluationCommand,
+    actor: ActorContext = Depends(require_owner_actor),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> OwnerEvaluation:
+    return _require_persistent_workflow().evaluate_task(
+        actor,
+        task_id,
+        command,
+        idempotency_key=idempotency_key,
+    )
 
 
 @app.get("/api/v1/approvals", response_model=list[ApprovalRequest])
@@ -232,6 +426,22 @@ def decide_approval(
     actor: ActorContext = Depends(require_owner_actor),
 ) -> ApprovalRequest:
     return mvp_store.decide_approval(actor, approval_id, command)
+
+
+@app.post("/api/v1/commands/approvals/{approval_id}/decision", response_model=ApprovalRequest)
+def decide_persistent_approval(
+    approval_id: str,
+    command: ApprovalDecisionCommand,
+    actor: ActorContext = Depends(require_owner_actor),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> ApprovalRequest:
+    return _require_persistent_workflow().decide_approval(
+        actor,
+        approval_id,
+        command.decision,
+        comment=command.comment,
+        idempotency_key=idempotency_key,
+    )
 
 
 @app.get("/api/v1/rewards", response_model=list[RewardRecord])

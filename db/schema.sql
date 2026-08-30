@@ -400,6 +400,17 @@ CREATE TABLE mvp_task_assignments (
   PRIMARY KEY (task_id, agent_id)
 );
 
+CREATE TABLE mvp_task_acceptance_history (
+  id TEXT PRIMARY KEY,
+  task_id TEXT NOT NULL REFERENCES mvp_tasks(id) ON DELETE CASCADE,
+  acceptance_criteria JSONB NOT NULL
+    CHECK (jsonb_typeof(acceptance_criteria) = 'array'),
+  changed_by TEXT NOT NULL REFERENCES owners(id),
+  change_type TEXT NOT NULL CHECK (change_type IN ('INITIAL', 'AMENDMENT')),
+  reason TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 CREATE TABLE mvp_agent_memberships (
   task_id TEXT NOT NULL REFERENCES mvp_tasks(id) ON DELETE CASCADE,
   agent_id TEXT NOT NULL REFERENCES mvp_agents(id),
@@ -676,6 +687,8 @@ CREATE TABLE mvp_outbox_events (
 CREATE INDEX mvp_tasks_status_idx ON mvp_tasks(status);
 CREATE INDEX mvp_tasks_executive_idx ON mvp_tasks(assigned_executive_agent_id);
 CREATE INDEX mvp_sub_tasks_parent_idx ON mvp_sub_tasks(parent_task_id);
+CREATE INDEX mvp_task_acceptance_history_task_idx
+  ON mvp_task_acceptance_history(task_id, created_at DESC);
 CREATE INDEX mvp_reviews_task_idx ON mvp_reviews(task_id, reviewed_at DESC);
 CREATE INDEX mvp_audits_task_idx ON mvp_audits(task_id, audited_at DESC);
 CREATE INDEX reward_allocations_task_idx ON reward_allocations(task_id);
