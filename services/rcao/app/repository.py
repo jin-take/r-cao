@@ -349,11 +349,14 @@ class RepositoryTransaction:
         task_id: str | None = None,
         correlation_id: str | None = None,
         limit: int = 200,
+        offset: int = 0,
     ) -> tuple[AuditEvent, ...]:
         """Read ordered Audit events for inspection or safe replay."""
 
         if limit < 1 or limit > 1000:
             raise ValueError("limit must be between 1 and 1000")
+        if offset < 0:
+            raise ValueError("offset cannot be negative")
         predicates: list[str] = []
         params: list[Any] = []
         if task_id is not None:
@@ -370,15 +373,28 @@ class RepositoryTransaction:
             {where}
             ORDER BY created_at ASC, id ASC
             LIMIT %s
+            OFFSET %s
             """,
-            (*params, limit),
+            (*params, limit, offset),
         )
         return tuple(AuditEvent.from_record(row) for row in rows)
 
     def replay_task(self, task_id: str, *, limit: int = 1000) -> ReplayResult:
         """Reconstruct a task from Audit records without external effects."""
 
-        return replay_audit_events(self.list_audit_events(task_id=task_id, limit=limit))
+        events: list[AuditEvent] = []
+        offset = 0
+        while True:
+            page = self.list_audit_events(
+                task_id=task_id,
+                limit=limit,
+                offset=offset,
+            )
+            events.extend(page)
+            if len(page) < limit:
+                break
+            offset += len(page)
+        return replay_audit_events(events)
 
     def _complete_idempotency(
         self, command: TaskTransitionCommand, result: TaskTransitionResult

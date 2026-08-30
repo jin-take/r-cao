@@ -250,6 +250,13 @@ class TaskWorkflowRepository:
         ):
             raise WorkflowAuthorizationError("canonical Owner authority is required")
 
+    @staticmethod
+    def _require_owner_review(task: PersistedTask) -> None:
+        if task.status != "OWNER_REVIEW":
+            raise WorkflowNotReady(
+                "Completion approval requires the Task to remain in OWNER_REVIEW"
+            )
+
     def _require_registered_agent(self, agent_id: str):
         agent = AgentRegistryRepository(self.transaction).require_agent(agent_id)
         AgentRegistryPolicy.ensure_active(agent)
@@ -909,6 +916,10 @@ class TaskWorkflowRepository:
         if replay is not None:
             return SubTaskRecord.model_validate(replay)
         task = self._fetch_task(task_id, for_update=True)
+        if task.status != "IN_PROGRESS":
+            raise InvalidTaskTransition(
+                "Evidence can only be submitted while Task is IN_PROGRESS"
+            )
         agent = self._require_agent_member(actor, task, action="SUBMIT_EVIDENCE")
         row = self.transaction.fetch_one(
             """
@@ -1092,18 +1103,23 @@ class TaskWorkflowRepository:
                 VALUES (%s, 'TASK_COMPLETION', %s, %s)
                 ON CONFLICT (id) DO NOTHING
                 """,
-                (f"approval-task-{task_id}", task_id, task.assigned_executive_agent_id),
+                (f"approval-task-{task_id}-{audit_id}", task_id, task.assigned_executive_agent_id),
             )
             self.transaction.execute(
                 """
                 INSERT INTO approval_requests
                   (id, approval_type, target_id, requested_by)
-                SELECT %s || id, 'REWARD', id::text, %s
+                SELECT %s || id::text || %s, 'REWARD', id::text, %s
                 FROM reward_allocations
                 WHERE task_id = %s
                 ON CONFLICT (id) DO NOTHING
                 """,
-                (f"approval-reward-", task.assigned_executive_agent_id, task_id),
+                (
+                    "approval-reward-",
+                    f"-{audit_id}",
+                    task.assigned_executive_agent_id,
+                    task_id,
+                ),
             )
         row = self.transaction.fetch_one(
             """
@@ -1251,6 +1267,7 @@ class TaskWorkflowRepository:
             raise WorkflowConflict("approval already has an Owner decision")
         if approval.approval_type is ApprovalType.TASK_COMPLETION:
             task = self._fetch_task(approval.target_id, for_update=True)
+            self._require_owner_review(task)
             if decision is ApprovalDecision.APPROVE:
                 self._require_owner_evaluation(task.id)
                 updated = self._update_task(task, status="COMPLETED", progress=100)

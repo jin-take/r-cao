@@ -21,6 +21,7 @@ import {
   mvpSubTasks as seedSubTasks,
   mvpTasks as seedTasks,
   ownerId,
+  resolveRewardApproval,
 } from "@/data/mvp";
 import type {
   ApprovalDecision,
@@ -180,6 +181,7 @@ export function MvpProvider({ children }: { children: ReactNode }) {
       status: "Approved",
       comment,
     } : reward));
+    setApprovals((current) => resolveRewardApproval(current, rewardId, comment));
     audit("APPROVE_REWARD", "REWARD", rewardId, comment);
   };
 

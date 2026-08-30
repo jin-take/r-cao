@@ -140,7 +140,7 @@ npm run typecheck
 npm run build
 
 python3 -m venv .venv
-.venv/bin/pip install -e 'services/rcao[dev]'
+.venv/bin/pip install -e 'services/rcao[dev,postgres]'
 .venv/bin/pytest -q services/rcao/tests
 .venv/bin/uvicorn app.main:app --app-dir services/rcao --reload
 ```
