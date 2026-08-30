@@ -4,6 +4,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
+from .agent_registry import AgentRegistryError
 from .agent_runtime import runtime_integration_notes
 from .auth import (
     ActorContext,
@@ -114,6 +115,13 @@ async def mvp_error(_, exc: MvpError) -> JSONResponse:
 @app.exception_handler(TaskWorkflowError)
 async def task_workflow_error(_, exc: TaskWorkflowError) -> JSONResponse:
     return JSONResponse(status_code=400, content={"detail": str(exc)})
+
+
+@app.exception_handler(AgentRegistryError)
+async def agent_registry_error(_, exc: AgentRegistryError) -> JSONResponse:
+    """Turn Registry authorization failures into controlled API responses."""
+
+    return JSONResponse(status_code=403, content={"detail": str(exc)})
 
 
 @app.get("/health", response_model=HealthResponse)

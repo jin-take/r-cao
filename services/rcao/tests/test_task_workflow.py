@@ -11,6 +11,7 @@ from app.task_workflow import (
     PersistedTask,
     TaskWorkflowRepository,
     WorkflowAuthorizationError,
+    WorkflowNotReady,
 )
 
 
@@ -79,3 +80,32 @@ def test_persistent_commands_require_the_canonical_owner_identity() -> None:
         repository._require_owner(actor("agent-theo", ActorType.AGENT, AgentRole.ENGINEERING))
 
     repository._require_owner(actor("owner-local", ActorType.OWNER, AgentRole.OWNER))
+
+
+def test_completion_approval_requires_the_task_to_still_be_in_owner_review() -> None:
+    now = datetime(2026, 8, 29, tzinfo=timezone.utc)
+    task = PersistedTask.from_record(
+        {
+            "id": "T-001",
+            "title": "Persistent Task",
+            "objective": "Exercise the durable workflow",
+            "background": "",
+            "priority": "HIGH",
+            "deadline": now,
+            "acceptance_criteria": [],
+            "reward_budget_lamports": 100,
+            "assigned_executive_agent_id": "agent-theo",
+            "risk_level": "LOW",
+            "external_action_allowed": False,
+            "owner_approval_required": True,
+            "status": "BLOCKED",
+            "progress": 50,
+            "created_by": "owner-local",
+            "created_at": now,
+            "updated_at": now,
+            "version": 2,
+        }
+    )
+
+    with pytest.raises(WorkflowNotReady, match="OWNER_REVIEW"):
+        TaskWorkflowRepository._require_owner_review(task)
