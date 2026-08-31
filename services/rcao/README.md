@@ -5,6 +5,7 @@ This package is the canonical Python boundary for Phase 1. It owns:
 - constitutional authorization and Task state transitions;
 - integer-lamport virtual Reward calculation;
 - formal Agent-to-Agent message validation;
+- persistent Task-bound A2A message Gateway with status, idempotency, and Audit/Outbox correlation;
 - provider-neutral Agent run contracts;
 - read-only operations search contract;
 - API authentication, canonical Owner Identity, and request-scoped Actor Context.
@@ -57,3 +58,25 @@ For optional provider integrations:
 MCP, and a local OpenAI-compatible SLM endpoint are selected explicitly and
 remain behind the same `AgentRuntime` protocol. None of them can bypass the
 Policy Engine or create a production asset-transfer path.
+
+## A2A message gateway
+
+The durable A2A boundary is enabled together with the PostgreSQL Task
+workflow:
+
+```bash
+RCAO_TASK_BACKEND=postgres DATABASE_URL=postgresql://... \
+  uvicorn app.main:app
+```
+
+`POST /api/v1/messages` accepts only a versioned, Task-bound envelope from the
+authenticated sender Agent. The gateway validates both registered Agents,
+Task membership, delegation and expiry, then records the message, Audit event,
+and Outbox notification in one transaction. Retries with the same
+idempotency key and nonce replay the original message without a second
+notification. `POST /api/v1/messages/{message_id}/status` is restricted to
+the registered recipient, and `GET /api/v1/messages` exposes Task/trace/
+conversation/status search without exposing message history across Tasks.
+
+Messages are coordination proposals only. A2A cannot directly mutate Tasks,
+the Virtual Ledger, Treasury, Agent Authority, wallets, or external systems.

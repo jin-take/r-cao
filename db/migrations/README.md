@@ -22,7 +22,7 @@ the history without executing the migration SQL:
 
 ```bash
 DATABASE_URL=postgresql://rcao:rcao@localhost:5432/rcao \
-  rcao-migrate --directory db/migrations --baseline-version 3
+  rcao-migrate --directory db/migrations --baseline-version 9
 ```
 
 Baseline stamping is explicit and never performs automatic schema detection.
@@ -45,9 +45,12 @@ Owner-Directed MVP, `0003_transaction_boundaries.sql` adds transactional
 command primitives, `0004_idempotency_request_fingerprint.sql` binds replay to
 the complete request, `0005_audit_outbox_replay.sql` adds versioned Audit /
 Outbox metadata, and `0006_agent_registry_capabilities.sql` adds the
-persistent Agent Registry and delegation relations. `db/schema.sql` remains a
-review-friendly consolidated schema; future changes must be represented by a
-new migration and reflected in that consolidated file.
+persistent Agent Registry and delegation relations. `0007_task_workflow_acceptance_history.sql`
+adds immutable Acceptance Criteria history, `0008_virtual_ledger_treasury.sql`
+adds the Virtual Reward Ledger and Treasury, and
+`0009_a2a_message_gateway.sql` adds the Task-bound A2A message Gateway.
+`db/schema.sql` remains a review-friendly consolidated schema; future changes
+must be represented by a new migration and reflected in that consolidated file.
 
 The migrations do not create wallets, hold private keys, connect to mainnet, or
 move real assets.
