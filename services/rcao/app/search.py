@@ -8,6 +8,7 @@ class SearchScope(str, Enum):
     TASKS = "TASKS"
     RUNS = "RUNS"
     MESSAGES = "MESSAGES"
+    EVIDENCE = "EVIDENCE"
     MEMORY = "MEMORY"
     AUDIT = "AUDIT"
 

@@ -22,7 +22,7 @@ the history without executing the migration SQL:
 
 ```bash
 DATABASE_URL=postgresql://rcao:rcao@localhost:5432/rcao \
-  rcao-migrate --directory db/migrations --baseline-version 10
+  rcao-migrate --directory db/migrations --baseline-version 11
 ```
 
 Baseline stamping is explicit and never performs automatic schema detection.
@@ -50,6 +50,8 @@ adds immutable Acceptance Criteria history, `0008_virtual_ledger_treasury.sql`
 adds the Virtual Reward Ledger and Treasury, and
 `0009_a2a_message_gateway.sql` adds the Task-bound A2A message Gateway.
 `0010_agent_runs.sql` adds provider-bound Agent Run metadata and result history.
+`0011_evidence_memory.sql` adds masked Evidence/Memory records, access scope,
+retention, and pgvector-compatible search columns.
 `db/schema.sql` remains a review-friendly consolidated schema; future changes
 must be represented by a new migration and reflected in that consolidated file.
 
