@@ -45,6 +45,9 @@ class PolicyAction(str, Enum):
     POST_REWARD = "POST_REWARD"
     DECIDE_TREASURY = "DECIDE_TREASURY"
     CHANGE_POLICY = "CHANGE_POLICY"
+    EMERGENCY_STOP = "EMERGENCY_STOP"
+    RESUME_STOP = "RESUME_STOP"
+    RESOLVE_INCIDENT = "RESOLVE_INCIDENT"
     EXTERNAL_INTAKE = "EXTERNAL_INTAKE"
     DIRECT_AGENT_TRANSFER = "DIRECT_AGENT_TRANSFER"
     MASTER_WALLET_TRANSFER = "MASTER_WALLET_TRANSFER"
@@ -187,6 +190,9 @@ _ROLE_ACTIONS: dict[PolicyAction, frozenset[AgentRole]] = {
     PolicyAction.POST_REWARD: frozenset({AgentRole.OWNER, AgentRole.TREASURY}),
     PolicyAction.DECIDE_TREASURY: frozenset({AgentRole.OWNER}),
     PolicyAction.CHANGE_POLICY: frozenset({AgentRole.OWNER}),
+    PolicyAction.EMERGENCY_STOP: frozenset({AgentRole.OWNER}),
+    PolicyAction.RESUME_STOP: frozenset({AgentRole.OWNER}),
+    PolicyAction.RESOLVE_INCIDENT: frozenset({AgentRole.OWNER}),
 }
 
 _OWNER_ONLY_ACTIONS = frozenset(
@@ -210,6 +216,9 @@ _OWNER_ONLY_ACTIONS = frozenset(
         PolicyAction.CANCEL_TASK,
         PolicyAction.DECIDE_TREASURY,
         PolicyAction.CHANGE_POLICY,
+        PolicyAction.EMERGENCY_STOP,
+        PolicyAction.RESUME_STOP,
+        PolicyAction.RESOLVE_INCIDENT,
     }
 )
 
