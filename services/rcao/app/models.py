@@ -1,5 +1,6 @@
 from enum import Enum
 from typing import Any
+from uuid import uuid4
 
 from pydantic import BaseModel, Field
 
@@ -42,6 +43,17 @@ class MessageType(str, Enum):
     DECISION_REQUEST = "DECISION_REQUEST"
     OWNER_DECISION = "OWNER_DECISION"
     EVIDENCE = "EVIDENCE"
+
+
+class MessageStatus(str, Enum):
+    """Durable lifecycle for a Task-bound A2A message."""
+
+    SENT = "SENT"
+    DELIVERED = "DELIVERED"
+    ACKNOWLEDGED = "ACKNOWLEDGED"
+    CONSUMED = "CONSUMED"
+    REJECTED = "REJECTED"
+    EXPIRED = "EXPIRED"
 
 
 class Agent(BaseModel):
@@ -120,6 +132,7 @@ class AgentMessage(BaseModel):
     schema_version: str = "1.0"
     message_id: str
     idempotency_key: str = Field(min_length=1)
+    nonce: str = Field(default_factory=lambda: uuid4().hex, min_length=1)
     trace_id: str
     task_id: str | None = None
     run_id: str | None = None
@@ -132,7 +145,8 @@ class AgentMessage(BaseModel):
     payload: dict[str, Any] = Field(default_factory=dict)
     evidence_refs: list[str] = Field(default_factory=list)
     expires_at: str | None = None
-    status: str = "SENT"
+    correlation_id: str | None = None
+    status: MessageStatus = MessageStatus.SENT
 
 
 class PhaseOneSimulationInput(BaseModel):

@@ -4,10 +4,19 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
+from .a2a import (
+    MessageAuthorizationError,
+    MessageGatewayError,
+    MessageSendResponse,
+    MessageStatusCommand,
+    MessageStatusResponse,
+    PersistentMessageGateway,
+)
 from .agent_registry import AgentRegistryError
 from .agent_runtime import runtime_integration_notes
 from .auth import (
     ActorContext,
+    ActorType,
     PolicyCheckRequest,
     PolicyCheckResponse,
     evaluate_actor_policy,
@@ -46,6 +55,7 @@ from .mvp import (
     TaskStatus,
     TaskStatusCommand,
 )
+from .models import AgentMessage, MessageStatus
 from .search import InMemoryOperationSearch, SearchQuery, SearchResponse, SearchScope
 from .task_workflow import (
     PersistentTaskWorkflow,
@@ -138,6 +148,16 @@ async def agent_registry_error(_, exc: AgentRegistryError) -> JSONResponse:
     """Turn Registry authorization failures into controlled API responses."""
 
     return JSONResponse(status_code=403, content={"detail": str(exc)})
+
+
+@app.exception_handler(MessageAuthorizationError)
+async def message_authorization_error(_, exc: MessageAuthorizationError) -> JSONResponse:
+    return JSONResponse(status_code=403, content={"detail": str(exc)})
+
+
+@app.exception_handler(MessageGatewayError)
+async def message_gateway_error(_, exc: MessageGatewayError) -> JSONResponse:
+    return JSONResponse(status_code=400, content={"detail": str(exc)})
 
 
 @app.get("/health", response_model=HealthResponse)
@@ -280,6 +300,69 @@ def _require_persistent_workflow() -> PersistentTaskWorkflow:
             detail="persistent Task workflow is disabled; set RCAO_TASK_BACKEND=postgres",
         )
     return persistent_task_workflow
+
+
+def _require_message_gateway() -> PersistentMessageGateway:
+    """Reuse the Task workflow's DB composition for the A2A gateway."""
+
+    return PersistentMessageGateway(_require_persistent_workflow().repository)
+
+
+@app.post("/api/v1/messages", response_model=MessageSendResponse)
+def send_agent_message(
+    message: AgentMessage,
+    actor: ActorContext = Depends(require_actor),
+) -> MessageSendResponse:
+    """Persist a validated Task-bound proposal for another registered Agent."""
+
+    if actor.actor_type is not ActorType.AGENT or actor.actor_id != message.sender_agent_id:
+        raise MessageAuthorizationError(
+            "the authenticated Agent must match sender_agent_id"
+        )
+    result = _require_message_gateway().send(message)
+    return MessageSendResponse(message=result.message, replayed=result.replayed)
+
+
+@app.post("/api/v1/messages/{message_id}/status", response_model=MessageStatusResponse)
+def update_agent_message_status(
+    message_id: str,
+    command: MessageStatusCommand,
+    actor: ActorContext = Depends(require_actor),
+) -> MessageStatusResponse:
+    """Advance a message lifecycle only by its registered recipient Agent."""
+
+    result = _require_message_gateway().transition_status(
+        message_id,
+        actor=actor,
+        status=command.status,
+        reason=command.reason,
+    )
+    return MessageStatusResponse(message=result.message, replayed=result.replayed)
+
+
+@app.get("/api/v1/messages", response_model=list[AgentMessage])
+def list_agent_messages(
+    task_id: str | None = Query(default=None),
+    trace_id: str | None = Query(default=None),
+    conversation_id: str | None = Query(default=None),
+    status: MessageStatus | None = Query(default=None),
+    limit: int = Query(default=100, ge=1, le=1000),
+    offset: int = Query(default=0, ge=0),
+    actor: ActorContext = Depends(require_actor),
+) -> list[AgentMessage]:
+    """Search messages by their safe correlation fields."""
+
+    return list(
+        _require_message_gateway().list_messages(
+            actor=actor,
+            task_id=task_id,
+            trace_id=trace_id,
+            conversation_id=conversation_id,
+            status=status,
+            limit=limit,
+            offset=offset,
+        )
+    )
 
 
 @app.post("/api/v1/commands/tasks", response_model=TaskRecord)
