@@ -765,6 +765,55 @@ CREATE TABLE mvp_agent_messages (
   CHECK (sender_agent_id <> recipient_agent_id)
 );
 
+-- Agent Runs store provider metadata and normalized proposals. Provider input
+-- is represented by hashes so the consolidated schema never becomes a secret
+-- or prompt archive; the request limits and trace references remain queryable.
+CREATE TABLE mvp_agent_runs (
+  id TEXT PRIMARY KEY,
+  idempotency_key TEXT NOT NULL UNIQUE,
+  task_id TEXT NOT NULL REFERENCES mvp_tasks(id) ON DELETE CASCADE,
+  agent_id TEXT NOT NULL REFERENCES mvp_agents(id),
+  provider TEXT NOT NULL CHECK (provider IN ('OPENAI', 'CODEX', 'LOCAL_SLM', 'TEST')),
+  model TEXT NOT NULL,
+  prompt_version TEXT NOT NULL,
+  trace_id TEXT NOT NULL,
+  allowed_tools JSONB NOT NULL DEFAULT '[]'::jsonb
+    CHECK (jsonb_typeof(allowed_tools) = 'array'),
+  network_scope JSONB NOT NULL DEFAULT '["OFFCHAIN"]'::jsonb
+    CHECK (jsonb_typeof(network_scope) = 'array'),
+  sandbox JSONB NOT NULL DEFAULT '{"enabled": true, "filesystem": "NONE", "allow_network": false}'::jsonb
+    CHECK (jsonb_typeof(sandbox) = 'object'),
+  limits JSONB NOT NULL DEFAULT '{}'::jsonb
+    CHECK (jsonb_typeof(limits) = 'object'),
+  input_hash TEXT NOT NULL CHECK (length(input_hash) = 64),
+  system_prompt_hash TEXT NOT NULL CHECK (length(system_prompt_hash) = 64),
+  status TEXT NOT NULL CHECK (
+    status IN ('PENDING', 'RUNNING', 'SUCCEEDED', 'FAILED', 'TIMED_OUT',
+               'CANCELLED', 'STOPPED', 'REJECTED')
+  ),
+  output TEXT NOT NULL DEFAULT '',
+  structured_output JSONB NOT NULL DEFAULT '{}'::jsonb
+    CHECK (jsonb_typeof(structured_output) = 'object'),
+  proposed_actions JSONB NOT NULL DEFAULT '[]'::jsonb
+    CHECK (jsonb_typeof(proposed_actions) = 'array'),
+  evidence_refs JSONB NOT NULL DEFAULT '[]'::jsonb
+    CHECK (jsonb_typeof(evidence_refs) = 'array'),
+  tool_calls JSONB NOT NULL DEFAULT '[]'::jsonb
+    CHECK (jsonb_typeof(tool_calls) = 'array'),
+  input_tokens INTEGER NOT NULL DEFAULT 0 CHECK (input_tokens >= 0),
+  output_tokens INTEGER NOT NULL DEFAULT 0 CHECK (output_tokens >= 0),
+  total_tokens INTEGER NOT NULL DEFAULT 0 CHECK (total_tokens >= 0),
+  cost_microusd BIGINT NOT NULL DEFAULT 0 CHECK (cost_microusd >= 0),
+  attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+  duration_ms BIGINT NOT NULL DEFAULT 0 CHECK (duration_ms >= 0),
+  error_code TEXT,
+  error_message TEXT,
+  started_at TIMESTAMPTZ NOT NULL,
+  finished_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 CREATE INDEX mvp_tasks_status_idx ON mvp_tasks(status);
 CREATE INDEX mvp_tasks_executive_idx ON mvp_tasks(assigned_executive_agent_id);
 CREATE INDEX mvp_sub_tasks_parent_idx ON mvp_sub_tasks(parent_task_id);
@@ -797,6 +846,14 @@ CREATE INDEX mvp_agent_messages_conversation_idx
   ON mvp_agent_messages(conversation_id, created_at ASC, id ASC);
 CREATE INDEX mvp_agent_messages_recipient_status_idx
   ON mvp_agent_messages(recipient_agent_id, status, expires_at);
+CREATE INDEX mvp_agent_runs_task_started_idx
+  ON mvp_agent_runs(task_id, started_at ASC, id ASC);
+CREATE INDEX mvp_agent_runs_agent_started_idx
+  ON mvp_agent_runs(agent_id, started_at DESC);
+CREATE INDEX mvp_agent_runs_trace_idx
+  ON mvp_agent_runs(trace_id, started_at ASC, id ASC);
+CREATE INDEX mvp_agent_runs_status_idx
+  ON mvp_agent_runs(status, started_at DESC);
 
 -- Audit records are append-only at the database boundary as well as in the
 -- application command boundary.
@@ -851,3 +908,42 @@ $$ LANGUAGE plpgsql;
 CREATE TRIGGER mvp_agent_messages_no_delete
   BEFORE DELETE ON mvp_agent_messages
   FOR EACH ROW EXECUTE FUNCTION reject_mvp_agent_message_delete();
+
+CREATE OR REPLACE FUNCTION reject_mvp_agent_run_request_mutation() RETURNS trigger AS $$
+BEGIN
+  IF NEW.id <> OLD.id
+     OR NEW.idempotency_key <> OLD.idempotency_key
+     OR NEW.task_id <> OLD.task_id
+     OR NEW.agent_id <> OLD.agent_id
+     OR NEW.provider <> OLD.provider
+     OR NEW.model <> OLD.model
+     OR NEW.prompt_version <> OLD.prompt_version
+     OR NEW.trace_id <> OLD.trace_id
+     OR NEW.allowed_tools <> OLD.allowed_tools
+     OR NEW.network_scope <> OLD.network_scope
+     OR NEW.sandbox <> OLD.sandbox
+     OR NEW.limits <> OLD.limits
+     OR NEW.input_hash <> OLD.input_hash
+     OR NEW.system_prompt_hash <> OLD.system_prompt_hash
+     OR NEW.started_at <> OLD.started_at
+     OR NEW.created_at <> OLD.created_at
+  THEN
+    RAISE EXCEPTION 'mvp_agent_runs request metadata is immutable';
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER mvp_agent_runs_request_immutable
+  BEFORE UPDATE ON mvp_agent_runs
+  FOR EACH ROW EXECUTE FUNCTION reject_mvp_agent_run_request_mutation();
+
+CREATE OR REPLACE FUNCTION reject_mvp_agent_run_delete() RETURNS trigger AS $$
+BEGIN
+  RAISE EXCEPTION 'mvp_agent_runs is append-only';
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER mvp_agent_runs_no_delete
+  BEFORE DELETE ON mvp_agent_runs
+  FOR EACH ROW EXECUTE FUNCTION reject_mvp_agent_run_delete();

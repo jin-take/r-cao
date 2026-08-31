@@ -76,6 +76,7 @@ def test_repository_migrations_are_ordered_and_cover_schema_layers(tmp_path: Pat
         (7, "task_workflow_acceptance_history"),
         (8, "virtual_ledger_treasury"),
         (9, "a2a_message_gateway"),
+        (10, "agent_runs"),
     ]
     assert "CREATE TABLE agents" in migrations[0].sql
     assert "CREATE TABLE mvp_tasks" in migrations[1].sql
@@ -97,6 +98,9 @@ def test_repository_migrations_are_ordered_and_cover_schema_layers(tmp_path: Pat
     assert "CREATE TABLE IF NOT EXISTS mvp_agent_messages" in migrations[8].sql
     assert "message_fingerprint" in migrations[8].sql
     assert "mvp_agent_messages_envelope_immutable" in migrations[8].sql
+    assert "CREATE TABLE IF NOT EXISTS mvp_agent_runs" in migrations[9].sql
+    assert "prompt_version" in migrations[9].sql
+    assert "mvp_agent_runs_request_immutable" in migrations[9].sql
     assert all(len(item.checksum) == 64 for item in migrations)
 
 

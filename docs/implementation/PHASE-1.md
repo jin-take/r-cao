@@ -48,7 +48,7 @@ Pythonの可読性・検証性とPostgreSQLのトランザクション境界を�
 |---|---|---|
 | Task | Owner発行、割当、状態、受入条件 | 外部Task受付、動的分解 |
 | Agent | 固有名、Role、能力Hash、評価 | 動的生成、モデルルーティングの自動最適化 |
-| Agent Run | provider/model/prompt/tool allow-list、run_id、trace_id | 長期実行、再試行、分散worker |
+| Agent Run | provider/model/prompt/tool allow-list、run_id、trace_id、limits、status、cost | 長期実行、分散worker |
 | Agent通信 | task_id必須のMessage envelope、Delegation、Handoff、Evidence | 暗号署名、分散transport |
 | Reward | lamports単位の仮想台帳、Pythonで計算 | Devnet記録、本番送金 |
 | Treasury | 提案、ROI、Risk、Owner決裁 | Multisig、Policy Program |
@@ -111,7 +111,7 @@ Repository接続、認証、全文/ベクトルindexの運用は次の実装境�
 
 1. Ownerが受入条件・期限・Reward上限を含むTaskを発行する。
 2. ManagerがResearcher、Builder、Reviewerへ担当を割り当てる。
-3. Agent Runtimeが`task_id`付きのRunを実行し、提案・Evidence・Messageを記録する。
+3. Agent Runtimeが`task_id`付きのRunを実行し、制約を検証した提案・Evidence・Messageを記録する。ProviderはTaskやLedgerを直接変更しない。
 4. ReviewerがQuality・Risk・Final Scoreを記録する。Contributor本人の自己レビューは禁止する。
 5. Ownerが受入または差戻しを決定する。
 6. 受入後、Treasuryが貢献度とFinal Scoreに基づく仮想Rewardを記帳する。
