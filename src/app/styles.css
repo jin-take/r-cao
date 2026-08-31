@@ -3,11 +3,33 @@
 html { background:#08100d; }
 body { margin:0; color:var(--ink); background:radial-gradient(circle at 80% -10%,#153a2a 0,transparent 33%),#08100d; font:15px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace; min-height:100vh; }
 a { color:inherit; text-decoration:none; }
-.topbar { height:64px; padding:0 max(24px,5vw); border-bottom:1px solid var(--line); display:flex; align-items:center; gap:40px; background:#08100ddd; position:sticky; top:0; backdrop-filter:blur(14px); z-index:2; }
+.topbar { min-height:64px; padding:0 max(24px,5vw); border-bottom:1px solid var(--line); display:flex; align-items:center; gap:40px; background:#08100ddd; position:sticky; top:0; backdrop-filter:blur(14px); z-index:2; }
 .brand { color:var(--green); font-weight:800; letter-spacing:.18em; }
 nav { display:flex; gap:24px; color:var(--muted); }
 nav a:hover { color:var(--ink); }
 .mode { margin-left:auto; color:var(--green); font-size:12px; border:1px solid #315c45; border-radius:99px; padding:6px 10px; }
+.connection-status { position:relative; display:flex; align-items:center; gap:8px; color:var(--green); font-size:11px; white-space:nowrap; }
+.connection-status.disconnected { color:var(--muted); }
+.connection-dot { width:7px; height:7px; border-radius:50%; background:var(--green); }
+.disconnected .connection-dot { background:#ee786f; }
+.connection-button { border:1px solid var(--line); background:#111a17; color:inherit; padding:7px 9px; cursor:pointer; font:inherit; }
+.connection-button:hover { border-color:var(--green); }
+.connection-popover { position:absolute; right:0; top:calc(100% + 12px); z-index:5; width:300px; border:1px solid var(--line); background:#111a17; box-shadow:0 14px 40px #0008; padding:16px; color:var(--ink); white-space:normal; }
+.connection-popover p { margin:0 0 12px; }
+.connection-popover p b,.connection-popover p small { display:block; }
+.connection-popover p small { color:var(--muted); margin-top:4px; font-size:10px; }
+.connection-form { display:grid; gap:10px; }
+.connection-form label { color:var(--muted); font-size:10px; }
+.connection-form input { display:block; width:100%; margin-top:6px; border:1px solid var(--line); background:#0b1310; color:var(--ink); padding:9px; font:inherit; }
+.connection-error { color:#ee786f; font-size:11px; overflow-wrap:anywhere; }
+.console-banner { display:flex; align-items:center; gap:14px; flex-wrap:wrap; padding:11px max(24px,5vw); border-bottom:1px solid var(--line); font-size:11px; }
+.console-banner b { color:var(--ink); }
+.console-banner span { color:var(--muted); overflow-wrap:anywhere; }
+.console-banner.info { background:#0c1b15; }
+.console-banner.warning { background:#1a1710; border-color:#765d31; }
+.console-banner.warning b { color:var(--amber); }
+.console-banner.danger { background:#1a1110; border-color:#713b38; }
+.console-banner.danger b { color:#ee786f; }
 .shell { max-width:1280px; margin:auto; padding:64px 28px 80px; }
 .eyebrow { color:var(--green); letter-spacing:.14em; font-size:12px; margin-bottom:12px; }
 .hero { display:flex; justify-content:space-between; align-items:end; gap:32px; margin-bottom:42px; }

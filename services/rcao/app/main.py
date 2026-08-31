@@ -1,6 +1,8 @@
 import os
+from uuid import uuid4
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
@@ -12,7 +14,7 @@ from .a2a import (
     MessageStatusResponse,
     PersistentMessageGateway,
 )
-from .agent_registry import AgentRegistryError
+from .agent_registry import AgentRegistryError, AgentRegistryRepository
 from .agent_runtime import runtime_integration_notes
 from .auth import (
     ActorContext,
@@ -27,6 +29,7 @@ from .mvp import (
     AgentCreateCommand,
     AgentRecord,
     AgentStatusCommand,
+    ApprovalDecision,
     ApprovalDecisionCommand,
     ApprovalRequest,
     AssignExecutiveCommand,
@@ -55,10 +58,12 @@ from .mvp import (
     TaskStatus,
     TaskStatusCommand,
 )
+from .console import PersistentConsoleReadModel
 from .models import AgentMessage, MessageStatus
 from .search import InMemoryOperationSearch, SearchQuery, SearchResponse, SearchScope
 from .task_workflow import (
     PersistentTaskWorkflow,
+    TaskWorkflowRepository,
     TaskWorkflowError,
     postgres_task_workflow,
 )
@@ -99,6 +104,26 @@ app = FastAPI(
     description="Owner-directed control plane and Agent runtime boundary.",
 )
 
+
+def _console_origins() -> list[str]:
+    configured = os.getenv(
+        "RCAO_CONSOLE_ORIGINS",
+        "http://localhost:3000,http://127.0.0.1:3000",
+    )
+    origins = [origin.strip() for origin in configured.split(",") if origin.strip()]
+    if not origins or "*" in origins:
+        raise RuntimeError("RCAO_CONSOLE_ORIGINS must contain explicit origins")
+    return origins
+
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_console_origins(),
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "Idempotency-Key"],
+)
+
 operation_search = InMemoryOperationSearch()
 mvp_store = OwnerDirectedStore(
     owner_id=os.getenv("RCAO_OWNER_ID", "owner-local"),
@@ -121,6 +146,16 @@ def _persistent_workflow_from_environment() -> PersistentTaskWorkflow | None:
 
 
 persistent_task_workflow = _persistent_workflow_from_environment()
+persistent_console_read_model = (
+    PersistentConsoleReadModel(
+        persistent_task_workflow.repository,
+        annual_budget_lamports=int(
+            os.getenv("RCAO_ANNUAL_BUDGET_LAMPORTS", "12500000000")
+        ),
+    )
+    if persistent_task_workflow is not None
+    else None
+)
 
 
 @app.exception_handler(MvpAuthorizationError)
@@ -199,17 +234,31 @@ def policy_check(
 
 
 @app.get("/api/v1/dashboard")
-def dashboard() -> dict:
+def dashboard(actor: ActorContext = Depends(require_owner_actor)) -> dict:
+    if persistent_console_read_model is not None:
+        return persistent_console_read_model.dashboard()
     return mvp_store.dashboard()
 
 
 @app.get("/api/v1/agents", response_model=list[AgentRecord])
-def list_agents(include_sub_agents: bool = Query(default=True)) -> list[AgentRecord]:
+def list_agents(
+    include_sub_agents: bool = Query(default=True),
+    actor: ActorContext = Depends(require_owner_actor),
+) -> list[AgentRecord]:
+    if persistent_console_read_model is not None:
+        return persistent_console_read_model.list_agents(
+            include_sub_agents=include_sub_agents
+        )
     return mvp_store.list_agents(include_sub_agents=include_sub_agents)
 
 
 @app.get("/api/v1/agents/{agent_id}", response_model=AgentRecord)
-def get_agent(agent_id: str) -> AgentRecord:
+def get_agent(
+    agent_id: str,
+    actor: ActorContext = Depends(require_owner_actor),
+) -> AgentRecord:
+    if persistent_console_read_model is not None:
+        return persistent_console_read_model.get_agent(agent_id)
     return mvp_store.get_agent(agent_id)
 
 
@@ -226,17 +275,42 @@ def change_agent_status(
     agent_id: str,
     command: AgentStatusCommand,
     actor: ActorContext = Depends(require_owner_actor),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
 ) -> AgentRecord:
+    if persistent_task_workflow is not None and persistent_console_read_model is not None:
+        def persist_status(transaction):
+            return AgentRegistryRepository(transaction).set_status(
+                actor_id=actor.actor_id,
+                actor_type=actor.actor_type.value,
+                agent_id=agent_id,
+                status=command.status.value,
+                audit_id=f"audit-{idempotency_key or uuid4().hex}",
+                correlation_id=f"corr-{uuid4().hex}",
+                reason=command.reason or "Owner changed Agent status",
+            )
+
+        persistent_task_workflow._run(persist_status)
+        return persistent_console_read_model.get_agent(agent_id)
     return mvp_store.set_agent_status(actor, agent_id, command)
 
 
 @app.get("/api/v1/tasks", response_model=list[TaskRecord])
-def list_tasks(status: TaskStatus | None = Query(default=None)) -> list[TaskRecord]:
+def list_tasks(
+    status: TaskStatus | None = Query(default=None),
+    actor: ActorContext = Depends(require_owner_actor),
+) -> list[TaskRecord]:
+    if persistent_console_read_model is not None:
+        return persistent_console_read_model.list_tasks(status.value if status else None)
     return mvp_store.list_tasks(status)
 
 
 @app.get("/api/v1/tasks/{task_id}", response_model=TaskDetail)
-def get_task(task_id: str) -> TaskDetail:
+def get_task(
+    task_id: str,
+    actor: ActorContext = Depends(require_owner_actor),
+) -> TaskDetail:
+    if persistent_console_read_model is not None:
+        return persistent_console_read_model.get_task_detail(task_id)
     return mvp_store.get_task_detail(task_id)
 
 
@@ -244,7 +318,14 @@ def get_task(task_id: str) -> TaskDetail:
 def create_task(
     command: TaskCreateCommand,
     actor: ActorContext = Depends(require_owner_actor),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
 ) -> TaskRecord:
+    if persistent_task_workflow is not None:
+        return persistent_task_workflow.create_task(
+            actor,
+            command,
+            idempotency_key=idempotency_key,
+        )
     return mvp_store.create_task(actor, command)
 
 
@@ -271,7 +352,16 @@ def transition_task(
     task_id: str,
     command: TaskStatusCommand,
     actor: ActorContext = Depends(require_actor),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
 ) -> TaskRecord:
+    if persistent_task_workflow is not None:
+        return persistent_task_workflow.transition_task(
+            actor,
+            task_id,
+            command.status,
+            reason=command.reason,
+            idempotency_key=idempotency_key,
+        )
     return mvp_store.transition_task(actor, task_id, command.status, reason=command.reason)
 
 
@@ -494,7 +584,15 @@ def evaluate_task(
     task_id: str,
     command: OwnerEvaluationCommand,
     actor: ActorContext = Depends(require_owner_actor),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
 ) -> OwnerEvaluation:
+    if persistent_task_workflow is not None:
+        return persistent_task_workflow.evaluate_task(
+            actor,
+            task_id,
+            command,
+            idempotency_key=idempotency_key,
+        )
     return mvp_store.evaluate_task(actor, task_id, command)
 
 
@@ -557,7 +655,11 @@ def pay_persistent_reward(
 
 
 @app.get("/api/v1/approvals", response_model=list[ApprovalRequest])
-def list_approvals() -> list[ApprovalRequest]:
+def list_approvals(
+    actor: ActorContext = Depends(require_owner_actor),
+) -> list[ApprovalRequest]:
+    if persistent_console_read_model is not None:
+        return persistent_console_read_model.list_approvals()
     return mvp_store.list_approvals()
 
 
@@ -566,7 +668,16 @@ def decide_approval(
     approval_id: str,
     command: ApprovalDecisionCommand,
     actor: ActorContext = Depends(require_owner_actor),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
 ) -> ApprovalRequest:
+    if persistent_task_workflow is not None:
+        return persistent_task_workflow.decide_approval(
+            actor,
+            approval_id,
+            command.decision,
+            comment=command.comment,
+            idempotency_key=idempotency_key,
+        )
     return mvp_store.decide_approval(actor, approval_id, command)
 
 
@@ -587,7 +698,11 @@ def decide_persistent_approval(
 
 
 @app.get("/api/v1/rewards", response_model=list[RewardRecord])
-def list_rewards() -> list[RewardRecord]:
+def list_rewards(
+    actor: ActorContext = Depends(require_owner_actor),
+) -> list[RewardRecord]:
+    if persistent_console_read_model is not None:
+        return persistent_console_read_model.list_rewards()
     return mvp_store.list_rewards()
 
 
@@ -596,12 +711,61 @@ def approve_reward(
     reward_id: str,
     command: RewardApprovalCommand,
     actor: ActorContext = Depends(require_owner_actor),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
 ) -> RewardRecord:
+    if persistent_task_workflow is not None and persistent_console_read_model is not None:
+        def approve_persistent_reward(transaction):
+            row = transaction.fetch_one(
+                """
+                SELECT id FROM approval_requests
+                WHERE approval_type = 'REWARD'::mvp_approval_type
+                  AND target_id = %s
+                  AND owner_decision IS NULL
+                ORDER BY created_at ASC, id ASC
+                LIMIT 1
+                """,
+                (reward_id,),
+            )
+            if row is None:
+                raise TaskWorkflowError(
+                    f"pending Reward approval is not registered: {reward_id}"
+                )
+            return TaskWorkflowRepository(
+                transaction,
+                owner_id=persistent_task_workflow.owner_id,
+            ).decide_approval(
+                actor,
+                str(row[0]),
+                ApprovalDecision.APPROVE,
+                comment=command.reason,
+                reward_amount_lamports=command.approved_reward_lamports,
+                idempotency_key=idempotency_key,
+            )
+
+        approve_persistent_reward_result = persistent_task_workflow._run(
+            approve_persistent_reward
+        )
+        del approve_persistent_reward_result
+        reward = next(
+            (
+                item
+                for item in persistent_console_read_model.list_rewards()
+                if item.id == reward_id
+            ),
+            None,
+        )
+        if reward is None:
+            raise TaskWorkflowError(f"Reward is not registered: {reward_id}")
+        return reward
     return mvp_store.approve_reward(actor, reward_id, command)
 
 
 @app.get("/api/v1/proposals", response_model=list[BoardProposal])
-def list_proposals() -> list[BoardProposal]:
+def list_proposals(
+    actor: ActorContext = Depends(require_owner_actor),
+) -> list[BoardProposal]:
+    if persistent_console_read_model is not None:
+        return persistent_console_read_model.list_proposals()
     return mvp_store.list_proposals()
 
 
@@ -623,7 +787,11 @@ def decide_proposal(
 
 
 @app.get("/api/v1/external-actions", response_model=list[ExternalActionRequest])
-def list_external_actions() -> list[ExternalActionRequest]:
+def list_external_actions(
+    actor: ActorContext = Depends(require_owner_actor),
+) -> list[ExternalActionRequest]:
+    if persistent_console_read_model is not None:
+        return persistent_console_read_model.list_external_actions()
     return mvp_store.list_external_actions()
 
 
@@ -654,12 +822,19 @@ def check_external_action_scope(
 
 
 @app.get("/api/v1/audit", response_model=list[AuditLogRecord])
-def list_audit(limit: int = Query(default=200, ge=1, le=1000)) -> list[AuditLogRecord]:
+def list_audit(
+    limit: int = Query(default=200, ge=1, le=1000),
+    actor: ActorContext = Depends(require_owner_actor),
+) -> list[AuditLogRecord]:
+    if persistent_console_read_model is not None:
+        return persistent_console_read_model.list_audit_logs(limit=limit)
     return mvp_store.list_audit_logs(limit=limit)
 
 
 @app.get("/api/v1/settings/policies")
-def policy_catalog() -> list[dict[str, str]]:
+def policy_catalog(
+    actor: ActorContext = Depends(require_owner_actor),
+) -> list[dict[str, str]]:
     return mvp_store.policy_catalog()
 
 
@@ -677,17 +852,19 @@ def search_operations(
     agent_id: str | None = Query(default=None),
     status: str | None = Query(default=None),
     limit: int = Query(default=50, ge=1, le=200),
+    actor: ActorContext = Depends(require_owner_actor),
 ) -> SearchResponse:
-    """Read-only operations search; PostgreSQL is the next repository adapter."""
+    """Read-only operations search over the configured control-plane read model."""
 
-    return operation_search.search(
-        SearchQuery(
-            q=q,
-            scope=scope,
-            task_id=task_id,
-            run_id=run_id,
-            agent_id=agent_id,
-            status=status,
-            limit=limit,
-        )
+    query = SearchQuery(
+        q=q,
+        scope=scope,
+        task_id=task_id,
+        run_id=run_id,
+        agent_id=agent_id,
+        status=status,
+        limit=limit,
     )
+    if persistent_console_read_model is not None:
+        return persistent_console_read_model.search_operations(query)
+    return operation_search.search(query)

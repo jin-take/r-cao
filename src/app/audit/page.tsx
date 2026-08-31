@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useMvp } from "@/app/mvp-context";
-import { isBlockingAuditAlert, isOwnerApprovalPending } from "@/data/mvp";
+import { isBlockingAuditAlert, isOwnerApprovalPending } from "@/lib/console-utils";
 
 export default function AuditPage() {
   const { auditLogs, audits, approvals } = useMvp();

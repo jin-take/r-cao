@@ -1,4 +1,4 @@
-export type OperationScope = "TASKS" | "RUNS" | "MESSAGES" | "MEMORY" | "AUDIT";
+export type OperationScope = "ALL" | "TASKS" | "RUNS" | "MESSAGES" | "EVIDENCE" | "MEMORY" | "AUDIT";
 
 export interface OperationRecord {
   recordId: string;
@@ -8,13 +8,13 @@ export interface OperationRecord {
   taskId: string | null;
   runId: string | null;
   agentId: string | null;
-  status: string;
+  status: string | null;
   createdAt: string;
   refs: string[];
 }
 
-// A read-only fixture for the console until the Python search endpoint is
-// connected to PostgreSQL. It mirrors the searchable fields in the API.
+// Retained only for read-model unit tests. Production Console pages use the
+// authenticated Python search endpoint and never import this fixture.
 export const demoOperations: OperationRecord[] = [
   {
     recordId: "msg-7f31",
