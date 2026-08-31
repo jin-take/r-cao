@@ -2,10 +2,10 @@
 
 import Link from "next/link";
 import { useMvp } from "@/app/mvp-context";
-import { formatSol, isBlockingAuditAlert, isOwnerApprovalPending } from "@/data/mvp";
+import { formatSol, isBlockingAuditAlert, isOwnerApprovalPending } from "@/lib/console-utils";
 
 export default function DashboardPage() {
-  const { agents, tasks, approvals, rewards, proposals, externalActions, auditLogs } = useMvp();
+  const { agents, tasks, approvals, rewards, proposals, externalActions, auditLogs, dashboard } = useMvp();
   const activeTasks = tasks.filter((task) => !["COMPLETED", "REJECTED", "CANCELLED"].includes(task.status));
   const reservedBudget = activeTasks.reduce((total, task) => total + task.rewardBudgetLamports, 0);
   const pendingRewards = rewards.filter((reward) => ["Pending", "Proposed", "Reserved"].includes(reward.status));
@@ -25,7 +25,7 @@ export default function DashboardPage() {
       </div>
 
       <div className="metrics">
-        <article><span>Virtual Treasury</span><strong>{formatSol(12_500_000_000)}</strong><small>実資産・Wallet操作なし</small></article>
+        <article><span>Annual Budget Reference</span><strong>{formatSol(dashboard?.budgetStatus.annualBudgetLamports ?? 0)}</strong><small>{dashboard?.budgetStatus.mode || "Control Plane data"} · 実資産なし</small></article>
         <article><span>Active Tasks</span><strong>{activeTasks.length}</strong><small>Owner-issued boundary</small></article>
         <article><span>Executive / Audit</span><strong>{agents.filter((agent) => agent.agentType !== "SUB_AGENT").length}</strong><small>named and auditable</small></article>
         <article><span>Approval Queue</span><strong>{approvals.filter((item) => !item.ownerDecision).length}</strong><small>Owner final decision</small></article>

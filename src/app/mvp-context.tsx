@@ -2,27 +2,13 @@
 
 import {
   createContext,
+  useCallback,
   useContext,
+  useEffect,
   useMemo,
-  useRef,
   useState,
   type ReactNode,
 } from "react";
-import {
-  mvpAgents as seedAgents,
-  mvpApprovals as seedApprovals,
-  mvpAuditLogs as seedAuditLogs,
-  mvpAudits as seedAudits,
-  mvpEvaluations as seedEvaluations,
-  mvpExternalActions as seedExternalActions,
-  mvpProposals as seedProposals,
-  mvpReviews as seedReviews,
-  mvpRewards as seedRewards,
-  mvpSubTasks as seedSubTasks,
-  mvpTasks as seedTasks,
-  ownerId,
-  resolveRewardApproval,
-} from "@/data/mvp";
 import type {
   ApprovalDecision,
   MvpAgent,
@@ -37,10 +23,35 @@ import type {
   MvpSubTask,
   MvpTask,
 } from "@/domain/model";
+import type { OperationRecord, OperationScope } from "@/data/operations";
+import {
+  clearStoredSession,
+  defaultApiBaseUrl,
+  loadConsoleSnapshot,
+  rcaoApi,
+  readStoredSession,
+  writeStoredSession,
+  type ConsoleDashboard,
+  type ConsoleSession,
+  type OwnerActor,
+  RcaoApiError,
+} from "@/lib/rcao-api";
 
-type CreateTaskInput = Pick<MvpTask, "title" | "objective" | "deadline" | "rewardBudgetLamports" | "assignedExecutiveAgentId">;
+export type CreateTaskInput = Pick<
+  MvpTask,
+  "title" | "objective" | "deadline" | "rewardBudgetLamports" | "assignedExecutiveAgentId"
+>;
 
 interface MvpContextValue {
+  actor: OwnerActor | null;
+  session: ConsoleSession | null;
+  dashboard: ConsoleDashboard | null;
+  connected: boolean;
+  loading: boolean;
+  error: string | null;
+  commandError: string | null;
+  operationsLoading: boolean;
+  operationsError: string | null;
   agents: MvpAgent[];
   tasks: MvpTask[];
   subtasks: MvpSubTask[];
@@ -52,180 +63,205 @@ interface MvpContextValue {
   proposals: MvpProposal[];
   externalActions: MvpExternalAction[];
   auditLogs: MvpAuditLog[];
-  createTask: (input: CreateTaskInput) => void;
-  setTaskStatus: (taskId: string, status: MvpTask["status"], reason?: string) => void;
-  evaluateTask: (taskId: string) => void;
-  decideApproval: (approvalId: string, decision: ApprovalDecision, comment?: string) => void;
-  approveReward: (rewardId: string, amount: number, comment?: string) => void;
+  operations: OperationRecord[];
+  connect: (baseUrl: string, token: string) => Promise<void>;
+  disconnect: () => void;
+  refresh: () => Promise<void>;
+  searchOperations: (query: string, scope: OperationScope) => Promise<void>;
+  clearCommandError: () => void;
+  createTask: (input: CreateTaskInput) => Promise<void>;
+  setTaskStatus: (taskId: string, status: MvpTask["status"], reason?: string) => Promise<void>;
+  evaluateTask: (taskId: string) => Promise<void>;
+  decideApproval: (approvalId: string, decision: ApprovalDecision, comment?: string) => Promise<void>;
+  approveReward: (rewardId: string, amount: number, comment?: string) => Promise<void>;
+  setAgentStatus: (agentId: string, status: MvpAgent["status"], reason?: string) => Promise<void>;
 }
 
 const MvpContext = createContext<MvpContextValue | null>(null);
 
-function clone<T>(value: T): T {
-  return structuredClone(value);
+function errorMessage(cause: unknown): string {
+  if (cause instanceof RcaoApiError) return cause.message;
+  if (cause instanceof Error) return cause.message;
+  return "Control Plane request failed";
 }
 
 export function MvpProvider({ children }: { children: ReactNode }) {
-  const [agents] = useState(() => clone(seedAgents));
-  const [tasks, setTasks] = useState(() => clone(seedTasks));
-  const [subtasks] = useState(() => clone(seedSubTasks));
-  const [reviews] = useState(() => clone(seedReviews));
-  const [audits] = useState(() => clone(seedAudits));
-  const [evaluations, setEvaluations] = useState(() => clone(seedEvaluations));
-  const [rewards, setRewards] = useState(() => clone(seedRewards));
-  const [approvals, setApprovals] = useState(() => clone(seedApprovals));
-  const [proposals, setProposals] = useState(() => clone(seedProposals));
-  const [externalActions, setExternalActions] = useState(() => clone(seedExternalActions));
-  const [auditLogs, setAuditLogs] = useState(() => clone(seedAuditLogs));
-  const sequence = useRef(100);
+  const [session, setSession] = useState<ConsoleSession | null>(null);
+  const [actor, setActor] = useState<OwnerActor | null>(null);
+  const [snapshot, setSnapshot] = useState<Awaited<ReturnType<typeof loadConsoleSnapshot>> | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [commandError, setCommandError] = useState<string | null>(null);
+  const [operationsLoading, setOperationsLoading] = useState(false);
+  const [operationsError, setOperationsError] = useState<string | null>(null);
 
-  const audit = (action: string, targetType: string, targetId: string, reason: string, policyResult: MvpAuditLog["policyResult"] = "ALLOW") => {
-    sequence.current += 1;
-    setAuditLogs((current) => [
-      {
-        id: `audit-${sequence.current}`,
-        actor: ownerId,
-        actorType: "OWNER",
-        action,
-        targetType,
-        targetId,
-        before: {},
-        after: {},
-        policyResult,
-        reason,
-        timestamp: new Date().toISOString(),
-        correlationId: `corr-${sequence.current}`,
-      },
-      ...current,
-    ]);
-  };
+  const applySnapshot = useCallback((next: Awaited<ReturnType<typeof loadConsoleSnapshot>>) => {
+    setActor(next.actor);
+    setSnapshot(next);
+  }, []);
 
-  const createTask = (input: CreateTaskInput) => {
-    sequence.current += 1;
-    const id = `T-${String(sequence.current).padStart(3, "0")}`;
-    const now = new Date().toISOString();
-    const task: MvpTask = {
-      id,
-      title: input.title,
-      objective: input.objective,
-      background: "Created from Owner Console MVP",
-      priority: "MEDIUM",
-      deadline: input.deadline,
-      acceptanceCriteria: ["成果物が提出されている", "ReviewとAuditを通過する"],
-      rewardBudgetLamports: input.rewardBudgetLamports,
-      assignedExecutiveAgentId: input.assignedExecutiveAgentId,
-      riskLevel: "LOW",
-      externalActionAllowed: false,
-      ownerApprovalRequired: true,
-      status: "DRAFT",
-      progress: 0,
-      createdBy: ownerId,
-      createdAt: now,
-      updatedAt: now,
-    };
-    setTasks((current) => [task, ...current]);
-    setRewards((current) => [
-      {
-        id: `reward-${id.toLowerCase()}`,
-        taskId: id,
-        agentId: input.assignedExecutiveAgentId,
-        rewardBudgetLamports: input.rewardBudgetLamports,
-        proposedRewardLamports: 0,
-        approvedRewardLamports: null,
-        paidRewardLamports: 0,
-        reservedRewardLamports: 0,
-        cancelledRewardLamports: 0,
-        status: "Pending",
-        approvedBy: null,
-        comment: "Reward Budget。自動支払いなし。",
-      },
-      ...current,
-    ]);
-    audit("CREATE_TASK", "TASK", id, "Owner created a draft Task with a Reward Budget");
-  };
-
-  const setTaskStatus = (taskId: string, status: MvpTask["status"], reason = "Owner Console action") => {
-    setTasks((current) => current.map((task) => task.id === taskId ? { ...task, status, updatedAt: new Date().toISOString() } : task));
-    audit("TRANSITION_TASK", "TASK", taskId, reason);
-  };
-
-  const evaluateTask = (taskId: string) => {
-    const evaluation: MvpEvaluation = {
-      taskId,
-      quality: 88,
-      difficulty: 3,
-      contribution: 90,
-      timeliness: 95,
-      rework: 0,
-      strategicValue: 80,
-      ownerComment: "Owner evaluation recorded in the MVP console.",
-      evaluatedBy: ownerId,
-      evaluatedAt: new Date().toISOString(),
-    };
-    setEvaluations((current) => [...current.filter((item) => item.taskId !== taskId), evaluation]);
-    setRewards((current) => current.map((reward) => reward.taskId === taskId && reward.status === "Pending" ? {
-      ...reward,
-      proposedRewardLamports: Math.floor(reward.rewardBudgetLamports * evaluation.quality / 100),
-      status: "Proposed",
-    } : reward));
-    audit("OWNER_EVALUATE_TASK", "TASK", taskId, "Owner evaluation recorded; Reward remains unapproved");
-  };
-
-  const approveReward = (rewardId: string, amount: number, comment = "Owner approved virtual Reward") => {
-    const reward = rewards.find((item) => item.id === rewardId);
-    if (!reward || !evaluations.some((item) => item.taskId === reward.taskId) || !["Pending", "Proposed"].includes(reward.status)) return;
-    setRewards((current) => current.map((reward) => reward.id === rewardId ? {
-      ...reward,
-      approvedRewardLamports: amount,
-      approvedBy: ownerId,
-      status: "Approved",
-      comment,
-    } : reward));
-    setApprovals((current) => resolveRewardApproval(current, rewardId, comment));
-    audit("APPROVE_REWARD", "REWARD", rewardId, comment);
-  };
-
-  const decideApproval = (approvalId: string, decision: ApprovalDecision, comment = "") => {
-    const approval = approvals.find((item) => item.id === approvalId);
-    if (!approval) return;
-    if (approval.approvalType === "TASK_COMPLETION" && decision === "APPROVE" && !evaluations.some((item) => item.taskId === approval.targetId)) return;
-    if (approval.approvalType === "REWARD" && decision === "APPROVE") {
-      const reward = rewards.find((item) => item.id === approval.targetId);
-      if (!reward || !evaluations.some((item) => item.taskId === reward.taskId)) return;
+  const load = useCallback(async (currentSession: ConsoleSession): Promise<void> => {
+    setLoading(true);
+    setError(null);
+    try {
+      const next = await loadConsoleSnapshot(currentSession);
+      applySnapshot(next);
+    } catch (cause) {
+      if (cause instanceof RcaoApiError && cause.kind === "AUTHENTICATION") {
+        setSession(null);
+        setActor(null);
+        setSnapshot(null);
+        clearStoredSession();
+      }
+      setError(errorMessage(cause));
+      throw cause;
+    } finally {
+      setLoading(false);
     }
-    setApprovals((current) => current.map((item) => item.id === approvalId ? { ...item, ownerDecision: decision, comment } : item));
-    if (approval.approvalType === "TASK_COMPLETION") {
-      if (decision === "APPROVE" && evaluations.some((item) => item.taskId === approval.targetId)) setTaskStatus(approval.targetId, "COMPLETED", comment || "Owner approved Task completion");
-      if (decision === "REQUEST_CHANGES") setTaskStatus(approval.targetId, "REWORK", comment || "Owner requested changes");
-      if (decision === "REJECT") setTaskStatus(approval.targetId, "REJECTED", comment || "Owner rejected completion");
+  }, [applySnapshot]);
+
+  useEffect(() => {
+    const stored = readStoredSession();
+    if (!stored) {
+      setLoading(false);
+      return;
     }
-    if (approval.approvalType === "REWARD" && decision === "APPROVE") {
-      const reward = rewards.find((item) => item.id === approval.targetId);
-      if (reward) approveReward(reward.id, reward.proposedRewardLamports, comment || "Owner approved proposed Reward");
+    setSession(stored);
+    void load(stored).catch(() => undefined);
+  }, [load]);
+
+  const connect = useCallback(async (baseUrl: string, token: string): Promise<void> => {
+    const candidate = { baseUrl: baseUrl.trim() || defaultApiBaseUrl(), token: token.trim() };
+    if (!candidate.token) {
+      setError("OwnerのBearer tokenを入力してください。");
+      return;
     }
-    if (approval.approvalType === "BOARD_PROPOSAL") setProposals((current) => current.map((item) => item.id === approval.targetId ? { ...item, ownerDecision: decision, status: decision } : item));
-    if (approval.approvalType === "EXTERNAL_ACTION") setExternalActions((current) => current.map((item) => item.id === approval.targetId ? { ...item, ownerDecision: decision, status: decision === "APPROVE" ? "APPROVED" : "REJECTED" } : item));
-    audit("DECIDE_APPROVAL", "APPROVAL_REQUEST", approvalId, comment || `Owner decision: ${decision}`);
-  };
+    setLoading(true);
+    setError(null);
+    setCommandError(null);
+    try {
+      const next = await loadConsoleSnapshot(candidate);
+      writeStoredSession(candidate);
+      setSession(candidate);
+      applySnapshot(next);
+    } catch (cause) {
+      setError(errorMessage(cause));
+      throw cause;
+    } finally {
+      setLoading(false);
+    }
+  }, [applySnapshot]);
+
+  const disconnect = useCallback(() => {
+    clearStoredSession();
+    setSession(null);
+    setActor(null);
+    setSnapshot(null);
+    setError(null);
+    setCommandError(null);
+    setOperationsError(null);
+  }, []);
+
+  const refresh = useCallback(async (): Promise<void> => {
+    if (!session) return;
+    setCommandError(null);
+    await load(session);
+  }, [load, session]);
+
+  const searchOperations = useCallback(async (query: string, scope: OperationScope): Promise<void> => {
+    if (!session || !snapshot) {
+      setOperationsError("Owner ConsoleをControl Planeへ接続してください。");
+      return;
+    }
+    setOperationsLoading(true);
+    setOperationsError(null);
+    try {
+      const operations = await rcaoApi.searchOperations(session, query, scope);
+      setSnapshot((current) => current ? { ...current, operations } : current);
+    } catch (cause) {
+      setOperationsError(errorMessage(cause));
+    } finally {
+      setOperationsLoading(false);
+    }
+  }, [session, snapshot]);
+
+  const executeCommand = useCallback(async (command: (currentSession: ConsoleSession) => Promise<unknown>): Promise<void> => {
+    setCommandError(null);
+    if (!session) {
+      setCommandError("Owner ConsoleをControl Planeへ接続してください。");
+      return;
+    }
+    try {
+      await command(session);
+      await load(session);
+    } catch (cause) {
+      setCommandError(errorMessage(cause));
+    }
+  }, [load, session]);
+
+  const clearCommandError = useCallback(() => setCommandError(null), []);
+
+  const createTask = useCallback((input: CreateTaskInput) => executeCommand((currentSession) => rcaoApi.createTask(currentSession, input)), [executeCommand]);
+  const setTaskStatus = useCallback((taskId: string, status: MvpTask["status"], reason = "Owner Console action") => executeCommand((currentSession) => rcaoApi.setTaskStatus(currentSession, taskId, status, reason)), [executeCommand]);
+  const evaluateTask = useCallback((taskId: string) => executeCommand((currentSession) => rcaoApi.evaluateTask(currentSession, taskId)), [executeCommand]);
+  const decideApproval = useCallback((approvalId: string, decision: ApprovalDecision, comment = "") => executeCommand((currentSession) => rcaoApi.decideApproval(currentSession, approvalId, decision, comment)), [executeCommand]);
+  const approveReward = useCallback((rewardId: string, amount: number, comment = "Owner approved virtual Reward") => executeCommand((currentSession) => rcaoApi.approveReward(currentSession, rewardId, amount, comment)), [executeCommand]);
+  const setAgentStatus = useCallback((agentId: string, status: MvpAgent["status"], reason = "Owner Console action") => executeCommand((currentSession) => rcaoApi.setAgentStatus(currentSession, agentId, status, reason)), [executeCommand]);
 
   const value = useMemo<MvpContextValue>(() => ({
-    agents,
-    tasks,
-    subtasks,
-    reviews,
-    audits,
-    evaluations,
-    rewards,
-    approvals,
-    proposals,
-    externalActions,
-    auditLogs,
+    actor,
+    session,
+    dashboard: snapshot?.dashboard ?? null,
+    connected: Boolean(session && actor),
+    loading,
+    error,
+    commandError,
+    operationsLoading,
+    operationsError,
+    agents: snapshot?.agents ?? [],
+    tasks: snapshot?.tasks ?? [],
+    subtasks: snapshot?.subtasks ?? [],
+    reviews: snapshot?.reviews ?? [],
+    audits: snapshot?.audits ?? [],
+    evaluations: snapshot?.evaluations ?? [],
+    rewards: snapshot?.rewards ?? [],
+    approvals: snapshot?.approvals ?? [],
+    proposals: snapshot?.proposals ?? [],
+    externalActions: snapshot?.externalActions ?? [],
+    auditLogs: snapshot?.auditLogs ?? [],
+    operations: snapshot?.operations ?? [],
+    connect,
+    disconnect,
+    refresh,
+    searchOperations,
+    clearCommandError,
     createTask,
     setTaskStatus,
     evaluateTask,
     decideApproval,
     approveReward,
-  }), [agents, tasks, subtasks, reviews, audits, evaluations, rewards, approvals, proposals, externalActions, auditLogs]);
+    setAgentStatus,
+  }), [
+    actor,
+    session,
+    snapshot,
+    loading,
+    error,
+    commandError,
+    operationsLoading,
+    operationsError,
+    connect,
+    disconnect,
+    refresh,
+    searchOperations,
+    clearCommandError,
+    createTask,
+    setTaskStatus,
+    evaluateTask,
+    decideApproval,
+    approveReward,
+    setAgentStatus,
+  ]);
 
   return <MvpContext.Provider value={value}>{children}</MvpContext.Provider>;
 }

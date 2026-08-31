@@ -1,10 +1,11 @@
 "use client";
 
 import { useMvp } from "@/app/mvp-context";
-import { agentName, formatSol } from "@/data/mvp";
+import { formatSol } from "@/lib/console-utils";
 
 export default function ProposalsPage() {
-  const { proposals, decideApproval, approvals } = useMvp();
+  const { proposals, agents, decideApproval, approvals } = useMvp();
+  const agentName = (agentId: string) => agents.find((agent) => agent.id === agentId)?.name ?? agentId;
   return <section className="shell">
     <div className="eyebrow">OWNER CONSOLE / BOARD PROPOSALS</div>
     <div className="hero"><div><h1>Board Proposals</h1><p>経営、資本配分、Risk、組織変更に関するProposalです。Agentは提案できますが、最終決議はOwnerだけが行います。</p></div><span className="mode-inline">OWNER DECISION</span></div>

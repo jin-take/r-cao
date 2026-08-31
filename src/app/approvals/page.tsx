@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useMvp } from "@/app/mvp-context";
-import { agentName, formatSol } from "@/data/mvp";
+import { formatSol } from "@/lib/console-utils";
 
 const labels: Record<string, string> = {
   TASK_COMPLETION: "Task Completion Approval",
@@ -15,8 +15,9 @@ const labels: Record<string, string> = {
 };
 
 export default function ApprovalsPage() {
-  const { approvals, tasks, rewards, proposals, externalActions, evaluations, decideApproval } = useMvp();
+  const { approvals, agents, tasks, rewards, proposals, externalActions, evaluations, decideApproval } = useMvp();
   const pending = approvals.filter((item) => !item.ownerDecision);
+  const agentName = (agentId: string) => agents.find((agent) => agent.id === agentId)?.name ?? agentId;
   const targetTitle = (approval: (typeof approvals)[number]) => {
     if (approval.approvalType === "TASK_COMPLETION") return tasks.find((task) => task.id === approval.targetId)?.title ?? approval.targetId;
     if (approval.approvalType === "REWARD") {

@@ -237,6 +237,29 @@ def test_api_rejects_tampered_token() -> None:
     assert response.status_code == 401
 
 
+def test_owner_console_reads_require_owner_authentication() -> None:
+    authenticator, _, _ = make_authenticator()
+    configure_runtime_authenticator(authenticator)
+    client = TestClient(app)
+
+    assert client.get("/api/v1/dashboard").status_code == 401
+
+    agent_token = authenticator.issue_token("builder-subject")
+    response = client.get(
+        "/api/v1/dashboard",
+        headers={"Authorization": f"Bearer {agent_token}"},
+    )
+    assert response.status_code == 403
+
+    owner_token = authenticator.issue_token("owner-subject")
+    response = client.get(
+        "/api/v1/dashboard",
+        headers={"Authorization": f"Bearer {owner_token}"},
+    )
+    assert response.status_code == 200
+    assert response.json()["budget_status"]["mode"] == "VIRTUAL_LEDGER"
+
+
 def test_runtime_rejects_checked_in_placeholder_secret(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("RCAO_AUTH_SECRET", "__SET_IN_LOCAL_ENV__")
     with pytest.raises(AuthenticationError, match="replaced"):

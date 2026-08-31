@@ -3,14 +3,16 @@
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useMvp } from "@/app/mvp-context";
-import { agentName, formatSol } from "@/data/mvp";
+import { formatSol } from "@/lib/console-utils";
 
 export default function TaskDetailPage() {
   const { id } = useParams<{ id: string }>();
-  const { tasks, subtasks, reviews, audits, evaluations, rewards, approvals, auditLogs, evaluateTask, decideApproval, approveReward } = useMvp();
+  const { tasks, agents, subtasks, reviews, audits, evaluations, rewards, approvals, auditLogs, evaluateTask, decideApproval, approveReward } = useMvp();
   const task = tasks.find((item) => item.id === id);
 
   if (!task) return <section className="shell"><div className="eyebrow">TASK NOT FOUND</div><h1>Unknown Task</h1><Link className="text-link" href="/tasks">Back to Task Board</Link></section>;
+
+  const agentName = (agentId: string) => agents.find((agent) => agent.id === agentId)?.name ?? agentId;
 
   const taskSubtasks = subtasks.filter((item) => item.parentTaskId === task.id);
   const taskReview = reviews.filter((item) => item.taskId === task.id);

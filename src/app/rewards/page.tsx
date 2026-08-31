@@ -2,10 +2,12 @@
 
 import Link from "next/link";
 import { useMvp } from "@/app/mvp-context";
-import { agentName, formatSol, taskTitle } from "@/data/mvp";
+import { formatSol } from "@/lib/console-utils";
 
 export default function RewardsPage() {
-  const { rewards, evaluations, approveReward } = useMvp();
+  const { rewards, agents, tasks, evaluations, approveReward } = useMvp();
+  const agentName = (agentId: string) => agents.find((agent) => agent.id === agentId)?.name ?? agentId;
+  const taskTitle = (taskId: string) => tasks.find((task) => task.id === taskId)?.title ?? taskId;
   const pending = rewards.filter((reward) => reward.status === "Pending" || reward.status === "Proposed" || reward.status === "Reserved");
   return <section className="shell">
     <div className="eyebrow">OWNER CONSOLE / REWARD LEDGER</div>

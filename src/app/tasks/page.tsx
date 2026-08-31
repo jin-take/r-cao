@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useState, type FormEvent } from "react";
 import { useMvp } from "@/app/mvp-context";
-import { formatSol } from "@/data/mvp";
+import { formatSol } from "@/lib/console-utils";
 import type { MvpTask, MvpTaskStatus } from "@/domain/model";
 
 const columns: { status: MvpTaskStatus; label: string }[] = [
