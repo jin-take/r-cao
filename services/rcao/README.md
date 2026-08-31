@@ -56,8 +56,19 @@ For optional provider integrations:
 
 `TEST` is the default CI mode. OpenAI Agents SDK / Responses API, Codex SDK or
 MCP, and a local OpenAI-compatible SLM endpoint are selected explicitly and
-remain behind the same `AgentRuntime` protocol. None of them can bypass the
-Policy Engine or create a production asset-transfer path.
+remain behind the same `AgentRuntime` protocol. `PolicyBoundAgentRuntime`
+enforces prompt version, tool allowlist, network scope, sandbox, timeout,
+retry, cancellation, token, and cost limits. Provider output is normalized as
+structured text, Evidence, or a Command Proposal and is never executed by the
+provider. None of them can bypass the Policy Engine or create a production
+asset-transfer path.
+
+Run metadata is stored by `AgentRunRepository` when the PostgreSQL composition
+is used. The database keeps provider/model/prompt version, tool and egress
+scope, request limits, trace IDs, usage/cost, proposal, Evidence references,
+and terminal status. Prompt contents are represented by hashes in the Run
+record; bearer tokens, API keys, wallet data, and private keys are rejected
+before provider invocation.
 
 ## A2A message gateway
 
