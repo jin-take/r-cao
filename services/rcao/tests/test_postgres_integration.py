@@ -101,7 +101,7 @@ def _seed_core_rows(connection, prefix: str) -> dict[str, str]:
                 """,
                 (
                     agent_id,
-                    name,
+                    f"{prefix} {name}",
                     role,
                     "Exercise the integration boundary",
                     json.dumps(["complete assigned work"]),
