@@ -248,5 +248,9 @@ npm run build
 2. PostgreSQL Repository、Transaction、Outbox、Replay
 3. Agent Runtime、A2A、Evidence、Memory
 4. Owner ConsoleとAPIの完全接続
-5. MPP / Solana devnet（別Gate、実資産なし）
+5. [MPP導入方針の確定](./docs/implementation/MPP-ADOPTION.md) → Solana devnet（#29の別Gate、実資産なし）
 6. Testnet・mainnet・外部活動の移行判定（Owner承認、監査、HSM/Multisig等が前提）
+
+MPPの設計は[MPP導入方針](./docs/implementation/MPP-ADOPTION.md)に固定しています。
+設計完了だけでは支払・署名・送信を有効化せず、local/devnet fixtureと#29の
+OwnerによるGo判定を要求します。
