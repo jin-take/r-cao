@@ -20,7 +20,14 @@ psycopg = pytest.importorskip("psycopg")
 
 from app.a2a import postgres_message_gateway
 from app.migrations import DEFAULT_MIGRATION_DIR, migrate
+from app.auth import ActorContext, ActorType
 from app.models import AgentMessage, AgentRole, MessageType
+from app.payment_boundary import (
+    PaymentNetwork,
+    PaymentPurpose,
+    ServicePaymentRequest,
+    ServicePaymentRepository,
+)
 from app.policy import Phase
 from app.repository import (
     PostgresRepository,
@@ -170,10 +177,31 @@ def _agent_message(ids: dict[str, str], suffix: str) -> AgentMessage:
     )
 
 
+def _service_payment_request(ids: dict[str, str], suffix: str) -> ServicePaymentRequest:
+    return ServicePaymentRequest(
+        payment_id=f"{ids['task']}-payment-{suffix}",
+        idempotency_key=f"{ids['task']}-payment-idem-{suffix}",
+        challenge_id=f"{ids['task']}-challenge-{suffix}",
+        nonce=f"{ids['task']}-nonce-{suffix}",
+        task_id=ids["task"],
+        run_id=f"{ids['task']}-run-{suffix}",
+        trace_id=f"{ids['task']}-trace-{suffix}",
+        correlation_id=f"{ids['task']}-correlation-{suffix}",
+        agent_id=ids["builder"],
+        service_id="service.example.compute",
+        recipient="service-account-001",
+        network=PaymentNetwork.LOCAL,
+        token="LOCAL_TEST_TOKEN",
+        amount_units=1250,
+        purpose=PaymentPurpose.SERVICE_PAYMENT,
+        expires_at=datetime.now(timezone.utc) + timedelta(minutes=10),
+    )
+
+
 def test_clean_migrations_create_the_complete_core_schema(migrated_database) -> None:
     connection, history = migrated_database
 
-    assert [item.version for item in history] == list(range(1, 13))
+    assert [item.version for item in history] == list(range(1, 14))
     assert [item.name for item in history] == [
         "phase1_foundation",
         "owner_directed_mvp",
@@ -187,6 +215,7 @@ def test_clean_migrations_create_the_complete_core_schema(migrated_database) -> 
         "agent_runs",
         "evidence_memory",
         "observability_stop_incidents",
+        "service_payment_boundary",
     ]
 
     required_tables = {
@@ -205,6 +234,8 @@ def test_clean_migrations_create_the_complete_core_schema(migrated_database) -> 
         "mvp_stop_controls",
         "mvp_observability_events",
         "mvp_incidents",
+        "mvp_service_payments",
+        "mvp_service_payment_events",
     }
     with connection.cursor() as cursor:
         cursor.execute(
@@ -224,6 +255,141 @@ def test_clean_migrations_create_the_complete_core_schema(migrated_database) -> 
     # A second run must be a no-op and must keep every checksum unchanged.
     rerun = migrate(connection, DEFAULT_MIGRATION_DIR)
     assert rerun == history
+
+
+def test_service_payment_isolated_from_virtual_reward_ledger(
+    migrated_database, database_url: str
+) -> None:
+    connection, _ = migrated_database
+    ids = _seed_core_rows(connection, f"payment-{uuid4().hex[:12]}")
+    request = _service_payment_request(ids, "valid")
+    actor = ActorContext(
+        actor_id=ids["builder"],
+        subject=f"subject:{ids['builder']}",
+        name="Integration Builder",
+        role=AgentRole.BUILDER,
+        actor_type=ActorType.AGENT,
+        phase=Phase.DEVNET,
+        token_id=f"token:{ids['builder']}",
+        issued_at=1,
+        expires_at=2,
+        task_ids={ids["task"]},
+        identity_version=1,
+    )
+    repository = PostgresRepository(lambda: psycopg.connect(database_url))
+
+    first = repository.run(
+        lambda tx: ServicePaymentRepository(tx).propose(request, actor=actor)
+    )
+    replay = repository.run(
+        lambda tx: ServicePaymentRepository(tx).propose(request, actor=actor)
+    )
+
+    assert first.payment.request.purpose is PaymentPurpose.SERVICE_PAYMENT
+    assert first.payment.status.value == "PROPOSED"
+    assert replay.replayed is True
+
+    with psycopg.connect(database_url) as verify:
+        payment = _fetch_one(
+            verify,
+            """
+            SELECT purpose, network, token, amount_units, policy_decision, status
+            FROM mvp_service_payments WHERE id = %s
+            """,
+            (request.payment_id,),
+        )
+        audit = _fetch_one(
+            verify,
+            """
+            SELECT event_type, target_type, payment_id, task_id, run_id,
+                   correlation_id, policy_result
+            FROM mvp_audit_logs WHERE payment_id = %s
+            """,
+            (request.payment_id,),
+        )
+        outbox = _fetch_one(
+            verify,
+            """
+            SELECT aggregate_type, aggregate_id, event_type, transaction_id
+            FROM mvp_outbox_events WHERE aggregate_id = %s
+            """,
+            (request.payment_id,),
+        )
+        ledger_count = _fetch_one(
+            verify,
+            "SELECT count(*) FROM mvp_virtual_ledger_entries WHERE task_id = %s",
+            (request.task_id,),
+        )
+        columns = _fetch_one(
+            verify,
+            """
+            SELECT count(*)
+            FROM information_schema.columns
+            WHERE table_schema = 'public'
+              AND table_name = 'mvp_service_payments'
+              AND column_name IN ('ledger_entry_id', 'recipient_agent_id', 'sender_agent_id')
+            """,
+        )
+
+    assert payment == (
+        "SERVICE_PAYMENT",
+        "LOCAL",
+        "LOCAL_TEST_TOKEN",
+        1250,
+        "allow",
+        "PROPOSED",
+    )
+    assert audit == (
+        "SERVICE_PAYMENT_PROPOSED",
+        "SERVICE_PAYMENT",
+        request.payment_id,
+        request.task_id,
+        request.run_id,
+        request.correlation_id,
+        "ALLOW",
+    )
+    assert outbox == (
+        "SERVICE_PAYMENT",
+        request.payment_id,
+        "SERVICE_PAYMENT_PROPOSED",
+        request.correlation_id,
+    )
+    assert ledger_count == (0,)
+    assert columns == (0,)
+
+    with psycopg.connect(database_url) as invalid:
+        with invalid.cursor() as cursor:
+            with pytest.raises(psycopg.Error):
+                cursor.execute(
+                    """
+                    INSERT INTO mvp_service_payments
+                      (id, idempotency_key, challenge_id, nonce, task_id, run_id,
+                       trace_id, correlation_id, agent_id, service_id, recipient,
+                       network, token, amount_units, purpose, expires_at,
+                       challenge_hash, policy_version, policy_decision, created_by)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                            'LOCAL', 'LOCAL_TEST_TOKEN', 1250, 'REWARD', %s,
+                            %s, %s, 'allow', %s)
+                    """,
+                    (
+                        f"{request.payment_id}-invalid",
+                        f"{request.idempotency_key}-invalid",
+                        f"{request.challenge_id}-invalid",
+                        f"{request.nonce}-invalid",
+                        request.task_id,
+                        request.run_id,
+                        request.trace_id,
+                        f"{request.correlation_id}-invalid",
+                        request.agent_id,
+                        request.service_id,
+                        "service-account-002",
+                        request.expires_at,
+                        request.challenge_hash(),
+                        "mpp-service-payment-v1",
+                        request.agent_id,
+                    ),
+                )
+            invalid.rollback()
 
 
 def test_persistent_task_audit_outbox_and_replay_share_a_transaction(

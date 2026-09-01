@@ -5,6 +5,7 @@ from .models import AgentRole, TaskState
 
 
 POLICY_VERSION = "constitutional-policy-v1"
+MPP_POLICY_VERSION = "mpp-service-payment-v1"
 
 
 class PolicyViolation(ValueError):
@@ -48,6 +49,8 @@ class PolicyAction(str, Enum):
     EMERGENCY_STOP = "EMERGENCY_STOP"
     RESUME_STOP = "RESUME_STOP"
     RESOLVE_INCIDENT = "RESOLVE_INCIDENT"
+    REQUEST_SERVICE_PAYMENT = "REQUEST_SERVICE_PAYMENT"
+    EXECUTE_SERVICE_PAYMENT = "EXECUTE_SERVICE_PAYMENT"
     EXTERNAL_INTAKE = "EXTERNAL_INTAKE"
     DIRECT_AGENT_TRANSFER = "DIRECT_AGENT_TRANSFER"
     MASTER_WALLET_TRANSFER = "MASTER_WALLET_TRANSFER"
@@ -193,6 +196,19 @@ _ROLE_ACTIONS: dict[PolicyAction, frozenset[AgentRole]] = {
     PolicyAction.EMERGENCY_STOP: frozenset({AgentRole.OWNER}),
     PolicyAction.RESUME_STOP: frozenset({AgentRole.OWNER}),
     PolicyAction.RESOLVE_INCIDENT: frozenset({AgentRole.OWNER}),
+    PolicyAction.REQUEST_SERVICE_PAYMENT: frozenset(
+        {
+            AgentRole.OWNER,
+            AgentRole.STRATEGY,
+            AgentRole.PRODUCT,
+            AgentRole.ENGINEERING,
+            AgentRole.OPERATIONS,
+            AgentRole.MANAGER,
+            AgentRole.RESEARCHER,
+            AgentRole.BUILDER,
+        }
+    ),
+    PolicyAction.EXECUTE_SERVICE_PAYMENT: frozenset({AgentRole.OWNER}),
 }
 
 _OWNER_ONLY_ACTIONS = frozenset(
@@ -219,6 +235,7 @@ _OWNER_ONLY_ACTIONS = frozenset(
         PolicyAction.EMERGENCY_STOP,
         PolicyAction.RESUME_STOP,
         PolicyAction.RESOLVE_INCIDENT,
+        PolicyAction.EXECUTE_SERVICE_PAYMENT,
     }
 )
 
@@ -232,6 +249,8 @@ _HARD_FORBIDDEN_ACTIONS = frozenset(
 _PHASE_BOUND_ACTIONS: dict[PolicyAction, PhaseCapability] = {
     PolicyAction.MASTER_WALLET_TRANSFER: PhaseCapability.MAINNET_ASSETS,
     PolicyAction.MAINNET_ASSET_OPERATION: PhaseCapability.MAINNET_ASSETS,
+    PolicyAction.REQUEST_SERVICE_PAYMENT: PhaseCapability.MPP_DEVNET,
+    PolicyAction.EXECUTE_SERVICE_PAYMENT: PhaseCapability.MPP_DEVNET,
 }
 
 

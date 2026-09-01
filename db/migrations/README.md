@@ -54,6 +54,10 @@ adds the Virtual Reward Ledger and Treasury, and
 retention, and pgvector-compatible search columns.
 `0012_observability_stop_incidents.sql` adds Owner-controlled stop state,
 structured operational events, and incident timelines.
+`0013_service_payment_boundary.sql` adds the isolated MPP Service Payment
+proposal table and append-only payment event table. It has no foreign key to
+the Virtual Reward Ledger or Treasury balances, and permits only local/devnet
+test assets.
 `db/schema.sql` remains a review-friendly consolidated schema; future changes
 must be represented by a new migration and reflected in that consolidated file.
 
