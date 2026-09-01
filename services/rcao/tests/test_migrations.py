@@ -79,6 +79,7 @@ def test_repository_migrations_are_ordered_and_cover_schema_layers(tmp_path: Pat
         (10, "agent_runs"),
         (11, "evidence_memory"),
         (12, "observability_stop_incidents"),
+        (13, "service_payment_boundary"),
     ]
     assert "CREATE TABLE agents" in migrations[0].sql
     assert "CREATE TABLE mvp_tasks" in migrations[1].sql
@@ -111,6 +112,10 @@ def test_repository_migrations_are_ordered_and_cover_schema_layers(tmp_path: Pat
     assert "CREATE TABLE IF NOT EXISTS mvp_observability_events" in migrations[11].sql
     assert "CREATE TABLE IF NOT EXISTS mvp_incidents" in migrations[11].sql
     assert "mvp_stop_control_history_no_mutation" in migrations[11].sql
+    assert "CREATE TABLE IF NOT EXISTS mvp_service_payments" in migrations[12].sql
+    assert "CREATE TABLE IF NOT EXISTS mvp_service_payment_events" in migrations[12].sql
+    assert "purpose = 'SERVICE_PAYMENT'" in migrations[12].sql
+    assert "mvp_service_payments_identity_immutable" in migrations[12].sql
     assert all(len(item.checksum) == 64 for item in migrations)
 
 

@@ -71,6 +71,19 @@ Ownerの承認がないProposalは、情報収集またはシミュレーショ�
 5. 給与または定期配分を導入する場合も、対象、期間、金額、条件、停止条件をOwnerが承認し、台帳を通じて支払う。
 6. Rewardの一部をTreasuryへ再投資する場合、対象、割合、時期、承認を記録する。
 
+### 5.1 MPP Service Paymentとの分離
+
+MPPのService Paymentは、登録済み外部ServiceのAPI・データ・計算資源を利用する
+ための費用であり、Rewardや給与ではありません。MPPのPayment recordはVirtual
+Reward Ledger、Treasury balance、Reward allocation、Agent間Transferの経路から
+分離し、Paymentの`purpose`は`SERVICE_PAYMENT`だけを許可します。
+
+- AgentはPaymentを提案できますが、MPP challengeだけで承認・署名・送信を決定できません。
+- Paymentの直接宛先は登録済みServiceだけとし、Agent、Owner、Treasury、Ledgerを宛先にしません。
+- `LOCAL`または`SOLANA_DEVNET`のtest fixtureだけを対象とし、SOLは手数料fixtureに限定します。
+- 秘密鍵・seed phrase・署名権はAgent、Provider、Browser、Task payloadへ渡しません。
+- 実装契約とGo/No-Go条件は[MPP導入方針](../implementation/MPP-ADOPTION.md)と#29で管理します。
+
 ## 6. Compoundingと再投資
 
 Compoundingは、獲得した資産を無条件に再投資することではありません。Ownerが承認した資本配分計画に基づき、運営継続性とリスクを確認した上で実施します。

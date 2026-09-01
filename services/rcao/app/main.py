@@ -18,9 +18,11 @@ from .agent_registry import AgentRegistryError, AgentRegistryRepository
 from .agent_runtime import runtime_integration_notes
 from .auth import (
     ActorContext,
+    ActorAuthorizationError,
     ActorType,
     PolicyCheckRequest,
     PolicyCheckResponse,
+    authorize_actor_action,
     evaluate_actor_policy,
     require_actor,
     require_owner_actor,
@@ -60,6 +62,12 @@ from .mvp import (
 )
 from .console import PersistentConsoleReadModel
 from .models import AgentMessage, MessageStatus
+from .payment_boundary import (
+    PaymentBoundaryError,
+    ServicePaymentRequest,
+    ServicePaymentRepository,
+)
+from .policy import PolicyAction
 from .search import InMemoryOperationSearch, SearchQuery, SearchResponse, SearchScope
 from .task_workflow import (
     PersistentTaskWorkflow,
@@ -175,6 +183,11 @@ async def task_workflow_error(_, exc: TaskWorkflowError) -> JSONResponse:
 
 @app.exception_handler(VirtualLedgerError)
 async def virtual_ledger_error(_, exc: VirtualLedgerError) -> JSONResponse:
+    return JSONResponse(status_code=400, content={"detail": str(exc)})
+
+
+@app.exception_handler(PaymentBoundaryError)
+async def payment_boundary_error(_, exc: PaymentBoundaryError) -> JSONResponse:
     return JSONResponse(status_code=400, content={"detail": str(exc)})
 
 
@@ -428,6 +441,38 @@ def update_agent_message_status(
         reason=command.reason,
     )
     return MessageStatusResponse(message=result.message, replayed=result.replayed)
+
+
+@app.post("/api/v1/commands/service-payments/proposals")
+def propose_service_payment(
+    command: ServicePaymentRequest,
+    actor: ActorContext = Depends(require_actor),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> dict:
+    """Persist a bounded Service Payment proposal without executing it.
+
+    There is intentionally no payment execution endpoint here.  A later
+    Wallet/Signer integration must consume the approved boundary after its own
+    migration gate; this route can only create a Policy/Audit/Outbox record.
+    """
+
+    if idempotency_key is not None and idempotency_key != command.idempotency_key:
+        raise PaymentBoundaryError(
+            "Idempotency-Key header must match the Service Payment request"
+        )
+    try:
+        authorize_actor_action(
+            actor,
+            PolicyAction.REQUEST_SERVICE_PAYMENT,
+            task_id=command.task_id,
+        )
+    except ActorAuthorizationError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    return _require_persistent_workflow().repository.run(
+        lambda transaction: ServicePaymentRepository(transaction)
+        .propose(command, actor=actor)
+        .to_payload()
+    )
 
 
 @app.get("/api/v1/messages", response_model=list[AgentMessage])

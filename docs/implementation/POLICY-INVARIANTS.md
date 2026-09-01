@@ -3,6 +3,7 @@
 - Policy version: constitutional-policy-v1
 - Status: Phase 1 baseline
 - Related issue: #24
+- MPP boundary issue: #15
 - Source of truth: services/rcao/app/policy.py
 
 ## 目的
@@ -45,6 +46,7 @@ allowだけを実行可能とし、他の判定はPolicyViolationとして拒否
 | POL-009 | Phaseごとに有効能力を限定する | PHASE_GATES、require_phase_capability | test_phase_one_gate_is_offchain_and_virtual_only、test_devnet_gate_allows_bounded_payment_experiments |
 | POL-010 | Phase 1のSOLは仮想整数lamportsのみ | VIRTUAL_LEDGERをPhase 1で許可 | test_phase_one_gate_is_offchain_and_virtual_only |
 | POL-011 | Policy変更はOwner決裁付きのPRで行う | CHANGE_POLICYをOwner-onlyにする | test_policy_change_is_owner_only |
+| POL-012 | MPPは登録済み外部Serviceの利用料だけを扱う | REQUEST_SERVICE_PAYMENT / EXECUTE_SERVICE_PAYMENT、Service Payment boundary | test_policy_exposes_a_separate_service_payment_action、test_service_payment_isolated_from_virtual_reward_ledger |
 
 ## Phase Gate
 
@@ -82,6 +84,8 @@ Policyの変更は設定ファイルだけで済ませず、コード・テス�
 - #28: Owner approvalとSigner境界
 - #29: Devnetから先へ進むための安全Gate
 - #34: Provider / Agent Runtimeの実装
+- #15: MPP Service PaymentとReward・Treasury・Agent間Transferの分離
+- #7: MPP導入方針と#29 Go/No-Go引き渡し
 
 関連文書: docs/constitution/R-CAO-CONSTITUTION.md、docs/organization/ORGANIZATION-REGULATION.md、
 docs/implementation/PHASE-1.md。
