@@ -154,6 +154,69 @@ export interface MvpAgent {
   budgetLimitLamports: number;
 }
 
+// MPP Payment Profiles are read-only console contracts.  The Python Control
+// Plane remains the authority for creating, changing, stopping, and using a
+// profile; these fields intentionally contain no credential or signing data.
+export const paymentProfileNetworks = ["LOCAL", "SOLANA_DEVNET"] as const;
+export type PaymentProfileNetwork = (typeof paymentProfileNetworks)[number];
+
+export const paymentProfileStatuses = [
+  "DRAFT",
+  "ACTIVE",
+  "DISABLED",
+  "SUSPENDED",
+  "EXPIRED",
+  "REVOKED",
+] as const;
+export type PaymentProfileStatus = (typeof paymentProfileStatuses)[number];
+
+export const paymentApprovalModes = ["AUTO_ALLOW", "OWNER_APPROVAL", "DENY"] as const;
+export type PaymentApprovalMode = (typeof paymentApprovalModes)[number];
+
+export const paymentProfileRiskLevels = ["LOW", "MEDIUM", "HIGH", "CRITICAL"] as const;
+export type PaymentProfileRiskLevel = (typeof paymentProfileRiskLevels)[number];
+
+export const paymentProfileRotationStates = [
+  "CURRENT",
+  "PENDING",
+  "RETIRED",
+  "REVOKED",
+] as const;
+export type PaymentProfileRotationState = (typeof paymentProfileRotationStates)[number];
+
+export interface MvpAgentPaymentProfile {
+  profileId: string;
+  agentId: string;
+  version: number;
+  walletId: string | null;
+  publicKey: string | null;
+  network: PaymentProfileNetwork;
+  cluster: "LOCAL" | "DEVNET";
+  serviceId: string;
+  recipient: string;
+  recipientKind: "SERVICE";
+  tokenAllowlist: string[];
+  mintAllowlist: string[];
+  serviceAllowlist: string[];
+  recipientAllowlist: string[];
+  programAllowlist: string[];
+  purposeAllowlist: ["SERVICE_PAYMENT"];
+  riskLevel: PaymentProfileRiskLevel;
+  approvalMode: PaymentApprovalMode;
+  perPaymentLimitUnits: number;
+  perTaskLimitUnits: number;
+  dailyLimitUnits: number;
+  autoApprovalLimitUnits: number;
+  maxExpirySeconds: number;
+  expiresAt: string;
+  status: PaymentProfileStatus;
+  rotationState: PaymentProfileRotationState;
+  createdBy: string;
+  ownerApprovalId: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface MvpTask {
   id: string;
   title: string;

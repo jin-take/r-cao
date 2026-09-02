@@ -28,6 +28,13 @@ from app.payment_boundary import (
     ServicePaymentRequest,
     ServicePaymentRepository,
 )
+from app.payment_profile import (
+    AgentPaymentProfile,
+    AgentPaymentProfileRepository,
+    PaymentApprovalMode,
+    PaymentProfileNetwork,
+    PaymentProfileStatus,
+)
 from app.policy import Phase
 from app.repository import (
     PostgresRepository,
@@ -177,7 +184,13 @@ def _agent_message(ids: dict[str, str], suffix: str) -> AgentMessage:
     )
 
 
-def _service_payment_request(ids: dict[str, str], suffix: str) -> ServicePaymentRequest:
+def _service_payment_request(
+    ids: dict[str, str],
+    suffix: str,
+    *,
+    profile_id: str | None = None,
+    profile_version: int | None = None,
+) -> ServicePaymentRequest:
     return ServicePaymentRequest(
         payment_id=f"{ids['task']}-payment-{suffix}",
         idempotency_key=f"{ids['task']}-payment-idem-{suffix}",
@@ -189,6 +202,8 @@ def _service_payment_request(ids: dict[str, str], suffix: str) -> ServicePayment
         correlation_id=f"{ids['task']}-correlation-{suffix}",
         agent_id=ids["builder"],
         service_id="service.example.compute",
+        profile_id=profile_id,
+        profile_version=profile_version,
         recipient="service-account-001",
         network=PaymentNetwork.LOCAL,
         token="LOCAL_TEST_TOKEN",
@@ -201,7 +216,7 @@ def _service_payment_request(ids: dict[str, str], suffix: str) -> ServicePayment
 def test_clean_migrations_create_the_complete_core_schema(migrated_database) -> None:
     connection, history = migrated_database
 
-    assert [item.version for item in history] == list(range(1, 14))
+    assert [item.version for item in history] == list(range(1, 15))
     assert [item.name for item in history] == [
         "phase1_foundation",
         "owner_directed_mvp",
@@ -216,6 +231,7 @@ def test_clean_migrations_create_the_complete_core_schema(migrated_database) -> 
         "evidence_memory",
         "observability_stop_incidents",
         "service_payment_boundary",
+        "agent_payment_profiles",
     ]
 
     required_tables = {
@@ -236,6 +252,8 @@ def test_clean_migrations_create_the_complete_core_schema(migrated_database) -> 
         "mvp_incidents",
         "mvp_service_payments",
         "mvp_service_payment_events",
+        "mvp_agent_payment_profiles",
+        "mvp_agent_payment_profile_versions",
     }
     with connection.cursor() as cursor:
         cursor.execute(
@@ -262,7 +280,29 @@ def test_service_payment_isolated_from_virtual_reward_ledger(
 ) -> None:
     connection, _ = migrated_database
     ids = _seed_core_rows(connection, f"payment-{uuid4().hex[:12]}")
-    request = _service_payment_request(ids, "valid")
+    profile = AgentPaymentProfile(
+        profile_id=f"{ids['task']}-payment-profile",
+        agent_id=ids["builder"],
+        network=PaymentProfileNetwork.LOCAL,
+        service_id="service.example.compute",
+        recipient="service-account-001",
+        token_allowlist=("LOCAL_TEST_TOKEN",),
+        service_allowlist=("service.example.compute",),
+        recipient_allowlist=("service-account-001",),
+        per_payment_limit_units=2_000,
+        per_task_limit_units=5_000,
+        daily_limit_units=10_000,
+        auto_approval_limit_units=2_000,
+        max_expiry_seconds=3_600,
+        approval_mode=PaymentApprovalMode.AUTO_ALLOW,
+        expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+    )
+    request = _service_payment_request(
+        ids,
+        "valid",
+        profile_id=profile.profile_id,
+        profile_version=profile.version,
+    )
     actor = ActorContext(
         actor_id=ids["builder"],
         subject=f"subject:{ids['builder']}",
@@ -277,6 +317,15 @@ def test_service_payment_isolated_from_virtual_reward_ledger(
         identity_version=1,
     )
     repository = PostgresRepository(lambda: psycopg.connect(database_url))
+    repository.run(
+        lambda tx: AgentPaymentProfileRepository(tx).create(
+            actor_id=ids["owner"],
+            actor_type="OWNER",
+            profile=profile,
+            audit_id=f"audit-{uuid4().hex}",
+            correlation_id=f"corr-{uuid4().hex}",
+        )
+    )
 
     first = repository.run(
         lambda tx: ServicePaymentRepository(tx).propose(request, actor=actor)
@@ -389,7 +438,140 @@ def test_service_payment_isolated_from_virtual_reward_ledger(
                         request.agent_id,
                     ),
                 )
-            invalid.rollback()
+        invalid.rollback()
+
+
+def test_payment_profile_is_owner_versioned_and_audited(
+    migrated_database, database_url: str
+) -> None:
+    connection, _ = migrated_database
+    ids = _seed_core_rows(connection, f"profile-{uuid4().hex[:12]}")
+    profile = AgentPaymentProfile(
+        profile_id=f"{ids['task']}-profile",
+        agent_id=ids["builder"],
+        network=PaymentProfileNetwork.LOCAL,
+        service_id="service.example.compute",
+        recipient="service-account-001",
+        token_allowlist=("LOCAL_TEST_TOKEN",),
+        service_allowlist=("service.example.compute",),
+        recipient_allowlist=("service-account-001",),
+        per_payment_limit_units=2_000,
+        per_task_limit_units=5_000,
+        daily_limit_units=10_000,
+        auto_approval_limit_units=2_000,
+        max_expiry_seconds=3_600,
+        approval_mode=PaymentApprovalMode.AUTO_ALLOW,
+        expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+    )
+    repository = PostgresRepository(lambda: psycopg.connect(database_url))
+
+    created = repository.run(
+        lambda tx: AgentPaymentProfileRepository(tx).create(
+            actor_id=ids["owner"],
+            actor_type="OWNER",
+            profile=profile,
+            audit_id=f"audit-{uuid4().hex}",
+            correlation_id=f"corr-{uuid4().hex}",
+        )
+    )
+    request = _service_payment_request(
+        ids,
+        "profiled",
+        profile_id=created.profile_id,
+        profile_version=created.version,
+    )
+    payment = repository.run(
+        lambda tx: ServicePaymentRepository(tx).propose(
+            request,
+            actor=ActorContext(
+                actor_id=ids["builder"],
+                subject=f"subject:{ids['builder']}",
+                name="Integration Builder",
+                role=AgentRole.BUILDER,
+                actor_type=ActorType.AGENT,
+                phase=Phase.DEVNET,
+                token_id=f"token:{ids['builder']}",
+                issued_at=1,
+                expires_at=2,
+                task_ids={ids["task"]},
+                identity_version=1,
+            ),
+        )
+    )
+    assert payment.payment.request.profile_id == created.profile_id
+    assert payment.payment.request.profile_version == 1
+
+    reduced = created.model_copy(
+        update={
+            "version": 2,
+            "per_payment_limit_units": 1_000,
+            "per_task_limit_units": 3_000,
+            "daily_limit_units": 5_000,
+            "auto_approval_limit_units": 1_000,
+        }
+    )
+    updated = repository.run(
+        lambda tx: AgentPaymentProfileRepository(tx).update(
+            actor_id=ids["owner"],
+            actor_type="OWNER",
+            profile=reduced,
+            expected_version=1,
+            audit_id=f"audit-{uuid4().hex}",
+            correlation_id=f"corr-{uuid4().hex}",
+        )
+    )
+    assert updated.version == 2
+
+    stopped = repository.run(
+        lambda tx: AgentPaymentProfileRepository(tx).set_status(
+            actor_id=ids["owner"],
+            actor_type="OWNER",
+            profile_id=updated.profile_id,
+            status=PaymentProfileStatus.SUSPENDED,
+            expected_version=2,
+            audit_id=f"audit-{uuid4().hex}",
+            correlation_id=f"corr-{uuid4().hex}",
+            reason="Owner paused the profile for a safety check",
+        )
+    )
+    assert stopped.version == 3
+    with pytest.raises(Exception, match="Owner"):
+        repository.run(
+            lambda tx: AgentPaymentProfileRepository(tx).set_status(
+                actor_id=ids["builder"],
+                actor_type="AGENT",
+                profile_id=stopped.profile_id,
+                status=PaymentProfileStatus.ACTIVE,
+                expected_version=3,
+                audit_id=f"audit-{uuid4().hex}",
+                correlation_id=f"corr-{uuid4().hex}",
+                reason="Agent must not resume a payment profile",
+            )
+        )
+
+    with psycopg.connect(database_url) as verify:
+        versions = _fetch_one(
+            verify,
+            "SELECT count(*) FROM mvp_agent_payment_profile_versions WHERE profile_id = %s",
+            (profile.profile_id,),
+        )
+        audit = _fetch_one(
+            verify,
+            """
+            SELECT count(*)
+            FROM mvp_audit_logs
+            WHERE target_type = 'PAYMENT_PROFILE' AND target_id = %s
+            """,
+            (profile.profile_id,),
+        )
+        payment_snapshot = _fetch_one(
+            verify,
+            "SELECT profile_id, profile_version FROM mvp_service_payments WHERE id = %s",
+            (request.payment_id,),
+        )
+    assert versions == (3,)
+    assert audit == (3,)
+    assert payment_snapshot == (profile.profile_id, 1)
 
 
 def test_persistent_task_audit_outbox_and_replay_share_a_transaction(

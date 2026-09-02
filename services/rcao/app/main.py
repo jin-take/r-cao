@@ -67,6 +67,15 @@ from .payment_boundary import (
     ServicePaymentRequest,
     ServicePaymentRepository,
 )
+from .payment_profile import (
+    AgentPaymentProfile,
+    AgentPaymentProfileRepository,
+    PaymentProfileError,
+    PaymentProfileCreateCommand,
+    PaymentProfileRotationCommand,
+    PaymentProfileStatusCommand,
+    PaymentProfileUpdateCommand,
+)
 from .policy import PolicyAction
 from .search import InMemoryOperationSearch, SearchQuery, SearchResponse, SearchScope
 from .task_workflow import (
@@ -189,6 +198,12 @@ async def virtual_ledger_error(_, exc: VirtualLedgerError) -> JSONResponse:
 @app.exception_handler(PaymentBoundaryError)
 async def payment_boundary_error(_, exc: PaymentBoundaryError) -> JSONResponse:
     return JSONResponse(status_code=400, content={"detail": str(exc)})
+
+
+@app.exception_handler(PaymentProfileError)
+async def payment_profile_error(_, exc: PaymentProfileError) -> JSONResponse:
+    status_code = 403 if "Owner authority" in str(exc) else 400
+    return JSONResponse(status_code=status_code, content={"detail": str(exc)})
 
 
 @app.exception_handler(AgentRegistryError)
@@ -472,6 +487,119 @@ def propose_service_payment(
         lambda transaction: ServicePaymentRepository(transaction)
         .propose(command, actor=actor)
         .to_payload()
+    )
+
+
+@app.get(
+    "/api/v1/payment-profiles",
+    response_model=list[AgentPaymentProfile],
+)
+def list_payment_profiles(
+    agent_id: str | None = Query(default=None),
+    actor: ActorContext = Depends(require_owner_actor),
+) -> list[AgentPaymentProfile]:
+    """Read Payment Profiles through the durable Owner control-plane boundary."""
+
+    def read(transaction):
+        repository = AgentPaymentProfileRepository(transaction)
+        if agent_id is not None:
+            return list(repository.list_for_agent(agent_id))
+        return list(repository.list_all())
+
+    return _require_persistent_workflow().repository.run(read)
+
+
+@app.post(
+    "/api/v1/commands/payment-profiles",
+    response_model=AgentPaymentProfile,
+)
+def create_payment_profile(
+    command: PaymentProfileCreateCommand,
+    actor: ActorContext = Depends(require_owner_actor),
+) -> AgentPaymentProfile:
+    """Create a secret-free, Owner-owned Payment Profile."""
+
+    profile = command.to_profile(actor_id=actor.actor_id)
+    return _require_persistent_workflow().repository.run(
+        lambda transaction: AgentPaymentProfileRepository(transaction).create(
+            actor_id=actor.actor_id,
+            actor_type=actor.actor_type.value,
+            profile=profile,
+            audit_id=f"audit-{uuid4().hex}",
+            correlation_id=f"corr-{uuid4().hex}",
+        )
+    )
+
+
+@app.put(
+    "/api/v1/commands/payment-profiles/{profile_id}",
+    response_model=AgentPaymentProfile,
+)
+def update_payment_profile(
+    profile_id: str,
+    command: PaymentProfileUpdateCommand,
+    actor: ActorContext = Depends(require_owner_actor),
+) -> AgentPaymentProfile:
+    if command.profile_id != profile_id:
+        raise PaymentBoundaryError("path profile_id must match the command profile_id")
+    profile = command.to_profile(actor_id=actor.actor_id)
+    return _require_persistent_workflow().repository.run(
+        lambda transaction: AgentPaymentProfileRepository(transaction).update(
+            actor_id=actor.actor_id,
+            actor_type=actor.actor_type.value,
+            profile=profile,
+            expected_version=command.expected_version,
+            owner_approval_id=command.owner_approval_id,
+            audit_id=f"audit-{uuid4().hex}",
+            correlation_id=f"corr-{uuid4().hex}",
+        )
+    )
+
+
+@app.post(
+    "/api/v1/commands/payment-profiles/{profile_id}/status",
+    response_model=AgentPaymentProfile,
+)
+def change_payment_profile_status(
+    profile_id: str,
+    command: PaymentProfileStatusCommand,
+    actor: ActorContext = Depends(require_owner_actor),
+) -> AgentPaymentProfile:
+    return _require_persistent_workflow().repository.run(
+        lambda transaction: AgentPaymentProfileRepository(transaction).set_status(
+            actor_id=actor.actor_id,
+            actor_type=actor.actor_type.value,
+            profile_id=profile_id,
+            status=command.status,
+            expected_version=command.expected_version,
+            audit_id=f"audit-{uuid4().hex}",
+            correlation_id=f"corr-{uuid4().hex}",
+            reason=command.reason,
+        )
+    )
+
+
+@app.post(
+    "/api/v1/commands/payment-profiles/{profile_id}/rotate",
+    response_model=AgentPaymentProfile,
+)
+def rotate_payment_profile(
+    profile_id: str,
+    command: PaymentProfileRotationCommand,
+    actor: ActorContext = Depends(require_owner_actor),
+) -> AgentPaymentProfile:
+    return _require_persistent_workflow().repository.run(
+        lambda transaction: AgentPaymentProfileRepository(transaction).rotate(
+            actor_id=actor.actor_id,
+            actor_type=actor.actor_type.value,
+            profile_id=profile_id,
+            expected_version=command.expected_version,
+            public_key=command.public_key,
+            wallet_id=command.wallet_id,
+            audit_id=f"audit-{uuid4().hex}",
+            correlation_id=f"corr-{uuid4().hex}",
+            reason=command.reason,
+        )
     )
 
 
