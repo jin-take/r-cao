@@ -386,7 +386,8 @@ def test_service_payment_isolated_from_virtual_reward_ledger(
             """
             SELECT event_type, target_type, payment_id, task_id, run_id,
                    correlation_id, policy_result
-            FROM mvp_audit_logs WHERE payment_id = %s
+            FROM mvp_audit_logs
+            WHERE payment_id = %s AND event_type = 'SERVICE_PAYMENT_PROPOSED'
             ORDER BY created_at ASC, id ASC
             """,
             (request.payment_id,),
@@ -395,7 +396,8 @@ def test_service_payment_isolated_from_virtual_reward_ledger(
             verify,
             """
             SELECT aggregate_type, aggregate_id, event_type, transaction_id
-            FROM mvp_outbox_events WHERE aggregate_id = %s
+            FROM mvp_outbox_events
+            WHERE aggregate_id = %s AND event_type = 'SERVICE_PAYMENT_PROPOSED'
             ORDER BY created_at ASC, id ASC
             """,
             (request.payment_id,),
