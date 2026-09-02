@@ -937,6 +937,7 @@ class AgentPaymentProfileRepository:
                 values[23],
                 values[24],
                 values[25],
+                owner_approval_id,
                 profile.profile_id,
                 current.version,
             ),
