@@ -216,7 +216,7 @@ def _service_payment_request(
 def test_clean_migrations_create_the_complete_core_schema(migrated_database) -> None:
     connection, history = migrated_database
 
-    assert [item.version for item in history] == list(range(1, 15))
+    assert [item.version for item in history] == list(range(1, 16))
     assert [item.name for item in history] == [
         "phase1_foundation",
         "owner_directed_mvp",
@@ -232,6 +232,7 @@ def test_clean_migrations_create_the_complete_core_schema(migrated_database) -> 
         "observability_stop_incidents",
         "service_payment_boundary",
         "agent_payment_profiles",
+        "mpp_policy_engine",
     ]
 
     required_tables = {
@@ -254,6 +255,10 @@ def test_clean_migrations_create_the_complete_core_schema(migrated_database) -> 
         "mvp_service_payment_events",
         "mvp_agent_payment_profiles",
         "mvp_agent_payment_profile_versions",
+        "mvp_mpp_policy_decisions",
+        "mvp_mpp_budget_counters",
+        "mvp_mpp_budget_reservations",
+        "mvp_mpp_signer_authorizations",
     }
     with connection.cursor() as cursor:
         cursor.execute(
@@ -342,8 +347,37 @@ def test_service_payment_isolated_from_virtual_reward_ledger(
         payment = _fetch_one(
             verify,
             """
-            SELECT purpose, network, token, amount_units, policy_decision, status
+            SELECT purpose, network, token, amount_units, policy_decision, status,
+                   policy_decision_id, budget_reservation_id, owner_approval_id
             FROM mvp_service_payments WHERE id = %s
+            """,
+            (request.payment_id,),
+        )
+        policy_decision = _fetch_one(
+            verify,
+            """
+            SELECT decision, policy_version, payment_id, task_id, run_id,
+                   trace_id, correlation_id, reservation_id
+            FROM mvp_mpp_policy_decisions
+            WHERE payment_id = %s
+            """,
+            (request.payment_id,),
+        )
+        reservation = _fetch_one(
+            verify,
+            """
+            SELECT payment_id, amount_units, status, profile_version
+            FROM mvp_mpp_budget_reservations
+            WHERE payment_id = %s
+            """,
+            (request.payment_id,),
+        )
+        payment_events = _fetch_one(
+            verify,
+            """
+            SELECT count(*)
+            FROM mvp_service_payment_events
+            WHERE payment_id = %s
             """,
             (request.payment_id,),
         )
@@ -353,6 +387,7 @@ def test_service_payment_isolated_from_virtual_reward_ledger(
             SELECT event_type, target_type, payment_id, task_id, run_id,
                    correlation_id, policy_result
             FROM mvp_audit_logs WHERE payment_id = %s
+            ORDER BY created_at ASC, id ASC
             """,
             (request.payment_id,),
         )
@@ -361,6 +396,7 @@ def test_service_payment_isolated_from_virtual_reward_ledger(
             """
             SELECT aggregate_type, aggregate_id, event_type, transaction_id
             FROM mvp_outbox_events WHERE aggregate_id = %s
+            ORDER BY created_at ASC, id ASC
             """,
             (request.payment_id,),
         )
@@ -387,7 +423,27 @@ def test_service_payment_isolated_from_virtual_reward_ledger(
         1250,
         "allow",
         "PROPOSED",
+        first.payment.policy_decision_id,
+        first.payment.budget_reservation_id,
+        None,
     )
+    assert policy_decision == (
+        "allow",
+        "mpp-policy-engine-v1",
+        request.payment_id,
+        request.task_id,
+        request.run_id,
+        request.trace_id,
+        request.correlation_id,
+        first.payment.budget_reservation_id,
+    )
+    assert reservation == (
+        request.payment_id,
+        1250,
+        "RESERVED",
+        1,
+    )
+    assert payment_events == (1,)
     assert audit == (
         "SERVICE_PAYMENT_PROPOSED",
         "SERVICE_PAYMENT",

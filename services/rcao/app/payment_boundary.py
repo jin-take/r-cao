@@ -30,10 +30,7 @@ from .policy import (
     evaluate_policy,
     require_phase_capability,
 )
-from .payment_profile import (
-    AgentPaymentProfilePolicy,
-    AgentPaymentProfileRepository,
-)
+from .payment_profile import AgentPaymentProfileRepository
 from .repository import RepositoryTransaction
 
 
@@ -87,6 +84,7 @@ class ServicePaymentStatus(str, Enum):
     EXPIRED = "EXPIRED"
     DENIED = "DENIED"
     STOPPED = "STOPPED"
+    CANCELLED = "CANCELLED"
 
 
 # Keep the boundary vocabulary discoverable without creating a second Policy
@@ -304,6 +302,9 @@ class ServicePaymentRecord:
     policy_decision: PolicyDecision
     status: ServicePaymentStatus
     policy_version: str
+    policy_decision_id: str | None = None
+    owner_approval_id: str | None = None
+    budget_reservation_id: str | None = None
     created_at: datetime | str | None = None
 
     @property
@@ -317,6 +318,9 @@ class ServicePaymentRecord:
             "policy_decision": self.policy_decision.value,
             "status": self.status.value,
             "policy_version": self.policy_version,
+            "policy_decision_id": self.policy_decision_id,
+            "owner_approval_id": self.owner_approval_id,
+            "budget_reservation_id": self.budget_reservation_id,
             "created_at": (
                 self.created_at.isoformat()
                 if isinstance(self.created_at, datetime)
@@ -348,6 +352,9 @@ PAYMENT_RECORD_COLUMNS = (
     "program_id",
     "profile_id",
     "profile_version",
+    "policy_decision_id",
+    "budget_reservation_id",
+    "owner_approval_id",
     "recipient",
     "recipient_kind",
     "network",
@@ -415,6 +422,21 @@ def _record_from_row(row: Any) -> ServicePaymentRecord:
         policy_decision=PolicyDecision(str(values["policy_decision"])),
         status=ServicePaymentStatus(str(values["status"])),
         policy_version=str(values["policy_version"]),
+        policy_decision_id=(
+            str(values["policy_decision_id"])
+            if values.get("policy_decision_id")
+            else None
+        ),
+        owner_approval_id=(
+            str(values["owner_approval_id"])
+            if values.get("owner_approval_id")
+            else None
+        ),
+        budget_reservation_id=(
+            str(values["budget_reservation_id"])
+            if values.get("budget_reservation_id")
+            else None
+        ),
         created_at=values.get("created_at"),
     )
 
@@ -493,6 +515,7 @@ class ServicePaymentRepository:
         profile_allows: bool = True,
         stopped: bool = False,
         now: datetime | None = None,
+        record_denied: bool = False,
     ) -> ServicePaymentResult:
         """Persist a proposal and its Audit/Outbox intent atomically.
 
@@ -533,34 +556,65 @@ class ServicePaymentRepository:
             raise PaymentPolicyError("Payment Profile Agent does not match the request")
         if profile.version != request.profile_version:
             raise PaymentPolicyError("Payment Profile version does not match the request snapshot")
-        profile_evaluation = AgentPaymentProfilePolicy.evaluate(
-            profile,
+        # #14 is the single application-service policy boundary.  The
+        # profile remains policy input; the engine additionally checks stops,
+        # correlation, current Agent/Provider state, and atomic budget state.
+        from .mpp_policy import (
+            MppPolicyEngine,
+            MppPolicyInput,
+            MppPolicyRepository,
+        )
+
+        policy_repository = MppPolicyRepository(self.transaction)
+        task_spent_units, daily_spent_units = policy_repository.current_spend(
+            profile_id=profile.profile_id,
+            task_id=request.task_id,
             agent_id=request.agent_id,
-            service_id=request.service_id,
-            recipient=request.recipient,
-            network=request.network.value,
-            token=request.token,
-            amount_units=request.amount_units,
-            purpose=request.purpose.value,
-            expires_at=request.expires_at,
-            program_id=request.program_id,
             now=now,
         )
-        if profile_evaluation.decision is PolicyDecision.DENY:
-            raise PaymentPolicyError(profile_evaluation.reason)
-        owner_approval_required = owner_approval_required or (
-            profile_evaluation.decision is PolicyDecision.REQUIRE_OWNER_APPROVAL
+        provider_id, provider_run_status = policy_repository.provider_status(request.run_id)
+        provider_status = (
+            "STOPPED"
+            if provider_run_status.upper() in {"STOPPED", "CANCELLED", "REJECTED"}
+            else "ACTIVE"
         )
-        evaluation = evaluate_service_payment(
+        context = MppPolicyInput.from_request(
             request,
+            profile=profile,
             phase=actor.phase,
-            now=now,
             service_registered=service_registered,
             profile_allows=profile_allows,
-            owner_approval_required=owner_approval_required,
-            stopped=stopped,
+            mpp_status="STOPPED" if stopped else "ACTIVE",
+            agent_status=policy_repository.agent_status(request.agent_id),
+            provider_id=provider_id,
+            provider_status=provider_status,
+            task_spent_units=task_spent_units,
+            daily_spent_units=daily_spent_units,
+            force_owner_approval=owner_approval_required,
         )
+        evaluation = MppPolicyEngine(
+            stop_checker=policy_repository.stop_reason,
+            clock=(lambda: now) if now is not None else None,
+        ).evaluate(context)
         if evaluation.decision is PolicyDecision.DENY:
+            if record_denied:
+                decision_id = f"mpp-decision-{request.payment_id}"
+                policy_repository.record_decision(
+                    context=context,
+                    evaluation=evaluation,
+                    actor_id=actor.actor_id,
+                    actor_type=actor.actor_type.value,
+                    decision_id=decision_id,
+                )
+                return ServicePaymentResult(
+                    ServicePaymentRecord(
+                        request=request,
+                        policy_decision=PolicyDecision.DENY,
+                        status=ServicePaymentStatus.DENIED,
+                        policy_version=evaluation.policy_version,
+                        policy_decision_id=decision_id,
+                    )
+                )
             raise PaymentPolicyError(evaluation.reason)
 
         status = (
@@ -569,6 +623,31 @@ class ServicePaymentRepository:
             else ServicePaymentStatus.PROPOSED
         )
         correlation_id = request.correlation_id
+        reservation_id: str | None = None
+        if (
+            request.amount_units <= profile.per_payment_limit_units
+            and task_spent_units + request.amount_units <= profile.per_task_limit_units
+            and daily_spent_units + request.amount_units <= profile.daily_limit_units
+        ):
+            reservation = policy_repository.reserve_budget(
+                profile=profile,
+                payment_id=request.payment_id,
+                idempotency_key=request.idempotency_key,
+                task_id=request.task_id,
+                agent_id=request.agent_id,
+                amount_units=request.amount_units,
+                correlation_id=correlation_id,
+                profile_version=request.profile_version,
+                now=now,
+            )
+            reservation_id = reservation.reservation.reservation_id
+        approval_id: str | None = None
+        if evaluation.decision is PolicyDecision.REQUIRE_OWNER_APPROVAL:
+            approval_id = policy_repository.enqueue_owner_approval(
+                payment_id=request.payment_id,
+                requested_by=actor.actor_id,
+            )
+        decision_id = f"mpp-decision-{request.payment_id}"
         after = {
             "payment_id": request.payment_id,
             "purpose": request.purpose.value,
@@ -586,18 +665,23 @@ class ServicePaymentRepository:
             "policy_decision": evaluation.decision.value,
             "status": status.value,
             "challenge_hash": request.challenge_hash(),
+            "policy_decision_id": decision_id,
+            "owner_approval_id": approval_id,
+            "budget_reservation_id": reservation_id,
         }
         self.transaction.execute(
             """
             INSERT INTO mvp_service_payments
               (id, idempotency_key, challenge_id, nonce, task_id, run_id,
                trace_id, correlation_id, agent_id, service_id, program_id,
-               profile_id, profile_version, recipient,
+               profile_id, profile_version, policy_decision_id,
+               budget_reservation_id, owner_approval_id, recipient,
                recipient_kind, network, token, amount_units, purpose,
                expires_at, challenge_hash, policy_version, policy_decision,
                status, created_by)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                    %s, %s, %s, %s)
             """,
             (
                 request.payment_id,
@@ -613,6 +697,9 @@ class ServicePaymentRepository:
                 request.program_id or "",
                 request.profile_id,
                 request.profile_version,
+                decision_id,
+                reservation_id,
+                approval_id,
                 request.recipient,
                 request.recipient_kind,
                 request.network.value,
@@ -666,6 +753,26 @@ class ServicePaymentRepository:
                 transaction_id=correlation_id,
             ),
         )
+        policy_repository.record_decision(
+            context=context,
+            evaluation=evaluation,
+            actor_id=actor.actor_id,
+            actor_type=actor.actor_type.value,
+            decision_id=decision_id,
+            approval_id=approval_id,
+            reservation_id=reservation_id,
+        )
+        policy_repository._payment_event(
+            payment_id=request.payment_id,
+            event_type=(
+                "APPROVAL_REQUIRED"
+                if evaluation.decision is PolicyDecision.REQUIRE_OWNER_APPROVAL
+                else "PROPOSED"
+            ),
+            correlation_id=correlation_id,
+            idempotency_key=f"mpp-payment:{request.idempotency_key}",
+            payload=after,
+        )
         row = self.transaction.fetch_one(
             f"""
             SELECT {', '.join(PAYMENT_RECORD_COLUMNS)}
@@ -677,3 +784,58 @@ class ServicePaymentRepository:
         if row is None:
             raise PaymentBoundaryError("Service Payment proposal was not persisted")
         return ServicePaymentResult(_record_from_row(row))
+
+    def decide_owner_approval(
+        self,
+        *,
+        payment_id: str,
+        approval_id: str,
+        actor: ActorContext,
+        decision: str,
+        comment: str = "",
+    ) -> Any:
+        """Record an Owner decision without granting Signer execution."""
+
+        from .mpp_policy import MppPolicyRepository
+
+        return MppPolicyRepository(self.transaction).decide_owner_approval(
+            payment_id=payment_id,
+            approval_id=approval_id,
+            actor_id=actor.actor_id,
+            actor_type=actor.actor_type.value,
+            decision=decision,
+            comment=comment,
+        )
+
+    def issue_signer_authorization(
+        self,
+        *,
+        payment_id: str,
+        policy_decision_id: str,
+        issued_by: str = "mpp-policy-engine",
+    ) -> Any:
+        """Issue a verifiable short-lived capability, never a signature."""
+
+        from .mpp_policy import MppPolicyRepository
+
+        return MppPolicyRepository(self.transaction).issue_signer_authorization(
+            payment_id=payment_id,
+            policy_decision_id=policy_decision_id,
+            issued_by=issued_by,
+        )
+
+    def cancel(
+        self,
+        *,
+        payment_id: str,
+        actor: ActorContext,
+        reason: str,
+    ) -> Any:
+        from .mpp_policy import MppPolicyRepository
+
+        return MppPolicyRepository(self.transaction).cancel_payment(
+            payment_id=payment_id,
+            actor_id=actor.actor_id,
+            actor_type=actor.actor_type.value,
+            reason=reason,
+        )

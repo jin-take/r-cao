@@ -1337,6 +1337,73 @@ class TaskWorkflowRepository:
                 after = {"status": decision.value, "comment": comment}
             target_type, target_id = "REWARD", allocation_id
             before = {"status": str(_row_value(allocation, "status", 5))}
+        elif approval.approval_type is ApprovalType.POLICY_EXCEPTION:
+            # MPP Policy Exception approvals share the Approval Center but
+            # never enter the Reward/Treasury workflow.
+            from .mpp_policy import MppPolicyRepository
+
+            payment = self.transaction.fetch_one(
+                """
+                SELECT task_id, run_id, trace_id, correlation_id, status,
+                       budget_reservation_id
+                FROM mvp_service_payments
+                WHERE id = %s AND owner_approval_id = %s
+                FOR UPDATE
+                """,
+                (approval.target_id, approval_id),
+            )
+            if payment is None:
+                raise WorkflowConflict("MPP Payment approval target is not registered")
+            before = {"status": str(_row_value(payment, "status", 4))}
+            payment_status = before["status"]
+            reservation_status = None
+            reservation_id = _row_value(payment, "budget_reservation_id", 5)
+            if decision is ApprovalDecision.APPROVE:
+                payment_status = "APPROVED"
+            elif decision in {ApprovalDecision.REJECT, ApprovalDecision.REQUEST_CHANGES}:
+                payment_status = "CANCELLED"
+                if reservation_id:
+                    reservation = MppPolicyRepository(self.transaction).release_reservation(
+                        str(reservation_id),
+                        cancelled=True,
+                    )
+                    reservation_status = reservation.status.value
+            if payment_status != before["status"]:
+                self.transaction.execute(
+                    """
+                    UPDATE mvp_service_payments
+                    SET status = %s, updated_at = now()
+                    WHERE id = %s
+                    """,
+                    (payment_status, approval.target_id),
+                )
+            MppPolicyRepository(self.transaction)._payment_event(
+                payment_id=approval.target_id,
+                event_type=(
+                    "APPROVED"
+                    if decision is ApprovalDecision.APPROVE
+                    else "CANCELLED"
+                    if decision in {ApprovalDecision.REJECT, ApprovalDecision.REQUEST_CHANGES}
+                    else "APPROVAL_REQUIRED"
+                ),
+                correlation_id=str(_row_value(payment, "correlation_id", 3)),
+                idempotency_key=f"mpp-approval:{approval_id}",
+                payload={
+                    "approval_id": approval_id,
+                    "decision": decision.value,
+                    "comment": comment,
+                },
+            )
+            target_type = "SERVICE_PAYMENT"
+            target_id = approval.target_id
+            task_id = str(_row_value(payment, "task_id", 0))
+            after = {
+                "status": payment_status,
+                "approval_id": approval_id,
+                "decision": decision.value,
+                "reservation_id": reservation_id,
+                "reservation_status": reservation_status,
+            }
         else:
             raise WorkflowConflict("approval type is outside the persistent Task workflow")
 

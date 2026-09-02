@@ -217,6 +217,64 @@ export interface MvpAgentPaymentProfile {
   updatedAt: string;
 }
 
+export const mppPolicyDecisions = ["allow", "require_owner_approval", "deny"] as const;
+export type MppPolicyDecision = (typeof mppPolicyDecisions)[number];
+
+export const mppReservationStatuses = ["RESERVED", "CONSUMED", "RELEASED", "CANCELLED"] as const;
+export type MppReservationStatus = (typeof mppReservationStatuses)[number];
+
+export const mppSignerAuthorizationStatuses = ["ISSUED", "CONSUMED", "REVOKED", "EXPIRED"] as const;
+export type MppSignerAuthorizationStatus = (typeof mppSignerAuthorizationStatuses)[number];
+
+// MPP policy records are read-only console contracts.  They do not expose a
+// key, seed, signature, or wallet operation.
+export interface MvpMppPolicyDecision {
+  id: string;
+  paymentId: string | null;
+  idempotencyKey: string;
+  taskId: string;
+  runId: string;
+  traceId: string;
+  correlationId: string;
+  agentId: string;
+  profileId: string | null;
+  profileVersion: number | null;
+  decision: MppPolicyDecision;
+  reason: string;
+  policyVersion: string;
+  approvalId: string | null;
+  reservationId: string | null;
+  createdAt: string;
+}
+
+export interface MvpMppBudgetReservation {
+  reservationId: string;
+  idempotencyKey: string;
+  paymentId: string;
+  agentId: string;
+  taskId: string;
+  profileId: string;
+  profileVersion: number;
+  amountUnits: number;
+  dailyPeriod: string;
+  status: MppReservationStatus;
+  correlationId: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface MvpMppSignerAuthorization {
+  authorizationId: string;
+  paymentId: string;
+  policyDecisionId: string;
+  approvalId: string | null;
+  authorizationHash: string;
+  issuedBy: string;
+  issuedAt: string;
+  expiresAt: string;
+  status: MppSignerAuthorizationStatus;
+}
+
 export interface MvpTask {
   id: string;
   title: string;
