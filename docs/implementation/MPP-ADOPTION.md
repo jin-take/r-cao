@@ -115,7 +115,29 @@ Policyの判定は、Profile、Task scope、現在のPhase、Stop control、Paym
 明示的な承認Commandと、承認時点のChallenge/Profile/Policy snapshotが揃った場合だけ
 Signer Requestを作成できる。Agentの提案やMPP challengeはOwner承認の代替にならない。
 
-## 5. Payment、Reward、Treasuryの相互分離
+## 5. Policy Engine、予算予約、停止制御
+
+services/rcao/app/mpp_policy.py is the application-service boundary for MPP
+payment decisions. It evaluates the current Phase, Task/Run/Trace correlation,
+Payment Profile snapshot, Agent/Provider/MPP/Signer stop state, and Task/daily
+capacity before a proposal can be handed to the next layer.
+
+- allow may create a bounded budget reservation and a short-lived, non-secret
+  Signer authorization record.
+- require_owner_approval creates a POLICY_EXCEPTION approval request and keeps
+  the Payment at APPROVAL_REQUIRED; it cannot issue Signer authorization.
+- deny records the reason and Policy version and cannot reach the Signer.
+- Reservations are idempotent and lock Task and UTC-day counters in a stable
+  order. Owner rejection/cancellation releases reserved capacity.
+- StopController and persistent mvp_stop_controls state are checked for MPP,
+  Payment, Agent, Run, Provider, Signer, and global stops.
+
+mvp_mpp_policy_decisions, mvp_mpp_budget_counters,
+mvp_mpp_budget_reservations, and mvp_mpp_signer_authorizations are
+control-plane records only. None stores a private key, seed, signed
+transaction, or network client.
+
+## 6. Payment、Reward、Treasuryの相互分離
 
 MPP Paymentは外部Serviceの利用料であり、R-CAO内部の報酬計算とは別の責務である。
 
@@ -132,7 +154,7 @@ MPP Paymentは外部Serviceの利用料であり、R-CAO内部の報酬計算と
 account、Agent-to-Agent transferへ書き込むFK/APIを作らない。既存のVirtual Ledger
 は従来どおり`VIRTUAL_REWARD`だけを扱う。
 
-## 6. Signer、秘密情報、Receipt
+## 7. Signer、秘密情報、Receipt
 
 Paymentの実行経路は次の一方向に固定する。
 
@@ -153,7 +175,7 @@ Paymentの実行経路は次の一方向に固定する。
 - Receiptには`payment_id`、`challenge_id`、`task_id`、`run_id`、`trace_id`、`correlation_id`、`signer_request_id`、`network`、`token`、`amount_units`、結果、外部signature（fixtureの場合はdeterministic ID）を保存する。
 - 失敗、期限切れ、停止、鍵ローテーション、replayもAudit対象とし、外部副作用を伴わないReplayではSignerを再呼出ししない。
 
-## 7. DB・型・テストの契約
+## 8. DB・型・テストの契約
 
 後続Issueは次の同じ語彙を使う。実装上のenum名やmigration番号は各Issueで追加するが、
 意味を変更する場合は本ADRを先に改訂する。
@@ -163,7 +185,7 @@ PaymentPurpose = SERVICE_PAYMENT
 PaymentNetwork = LOCAL | SOLANA_DEVNET
 PaymentDecision = allow | require_owner_approval | deny
 PaymentStatus = PROPOSED | APPROVAL_REQUIRED | APPROVED | SIGNER_REQUESTED
-                | SUBMITTED | CONFIRMED | FAILED | EXPIRED | DENIED | STOPPED
+                | SUBMITTED | CONFIRMED | FAILED | EXPIRED | DENIED | STOPPED | CANCELLED
 ```
 
 最低限のDB境界は以下とする。
@@ -184,7 +206,7 @@ PaymentStatus = PROPOSED | APPROVAL_REQUIRED | APPROVED | SIGNER_REQUESTED
 5. 同じidempotency keyの再送が一つのPayment/Receiptにreplayされる。
 6. Task/Run/Trace/Receipt/Auditを相関して検索でき、ReplayがSignerやnetwork adapterを呼ばない。
 
-## 8. 子Issueの責務と実装順
+## 9. 子Issueの責務と実装順
 
 | 順序 | Issue | 責務 | このADRとの関係 |
 |---:|---|---|---|
@@ -202,7 +224,7 @@ PaymentStatus = PROPOSED | APPROVAL_REQUIRED | APPROVED | SIGNER_REQUESTED
 後続PRは、上表より前の境界を再実装しない。特に#11がMPP SDKを追加しても、
 AgentがSignerやReward APIを呼べるようにはしない。
 
-## 9. #29へのGo / No-Go引き渡し
+## 10. #29へのGo / No-Go引き渡し
 
 ### Goに必要な証拠
 

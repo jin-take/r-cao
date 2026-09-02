@@ -76,6 +76,10 @@ from .payment_profile import (
     PaymentProfileStatusCommand,
     PaymentProfileUpdateCommand,
 )
+from .mpp_policy import (
+    MppPolicyError,
+    MppSignerAuthorization,
+)
 from .policy import PolicyAction
 from .search import InMemoryOperationSearch, SearchQuery, SearchResponse, SearchScope
 from .task_workflow import (
@@ -113,6 +117,16 @@ class TreasuryFundingCommand(BaseModel):
 class RewardPaymentCommand(BaseModel):
     retention_bps: int = Field(default=0, ge=0, le=10_000)
     reason: str = Field(default="Owner released the approved virtual Reward", min_length=1)
+
+
+class MppPaymentApprovalCommand(BaseModel):
+    decision: ApprovalDecision
+    comment: str = Field(default="", max_length=2_000)
+
+
+class MppSignerAuthorizationCommand(BaseModel):
+    policy_decision_id: str = Field(min_length=1, max_length=200)
+    issued_by: str = Field(default="mpp-policy-engine", min_length=1, max_length=200)
 
 
 app = FastAPI(
@@ -202,6 +216,12 @@ async def payment_boundary_error(_, exc: PaymentBoundaryError) -> JSONResponse:
 
 @app.exception_handler(PaymentProfileError)
 async def payment_profile_error(_, exc: PaymentProfileError) -> JSONResponse:
+    status_code = 403 if "Owner authority" in str(exc) else 400
+    return JSONResponse(status_code=status_code, content={"detail": str(exc)})
+
+
+@app.exception_handler(MppPolicyError)
+async def mpp_policy_error(_, exc: MppPolicyError) -> JSONResponse:
     status_code = 403 if "Owner authority" in str(exc) else 400
     return JSONResponse(status_code=status_code, content={"detail": str(exc)})
 
@@ -485,9 +505,65 @@ def propose_service_payment(
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     return _require_persistent_workflow().repository.run(
         lambda transaction: ServicePaymentRepository(transaction)
-        .propose(command, actor=actor)
+        .propose(command, actor=actor, record_denied=True)
         .to_payload()
     )
+
+
+@app.post("/api/v1/commands/service-payments/{payment_id}/approval")
+def decide_service_payment_approval(
+    payment_id: str,
+    command: MppPaymentApprovalCommand,
+    actor: ActorContext = Depends(require_owner_actor),
+) -> dict:
+    """Resolve a Policy Exception approval; it never signs or sends."""
+
+    result = _require_persistent_workflow().repository.run(
+        lambda transaction: ServicePaymentRepository(transaction).decide_owner_approval(
+            payment_id=payment_id,
+            approval_id=f"approval-mpp-{payment_id}",
+            actor=actor,
+            decision=command.decision.value,
+            comment=command.comment,
+        )
+    )
+    return result.model_dump(mode="json")
+
+
+@app.post(
+    "/api/v1/commands/service-payments/{payment_id}/signer-authorization",
+    response_model=MppSignerAuthorization,
+)
+def issue_service_payment_signer_authorization(
+    payment_id: str,
+    command: MppSignerAuthorizationCommand,
+    actor: ActorContext = Depends(require_owner_actor),
+) -> MppSignerAuthorization:
+    """Issue only the short-lived Policy capability consumed by a Signer."""
+
+    return _require_persistent_workflow().repository.run(
+        lambda transaction: ServicePaymentRepository(transaction).issue_signer_authorization(
+            payment_id=payment_id,
+            policy_decision_id=command.policy_decision_id,
+            issued_by=command.issued_by,
+        )
+    )
+
+
+@app.post("/api/v1/commands/service-payments/{payment_id}/cancel")
+def cancel_service_payment(
+    payment_id: str,
+    reason: str = Query(min_length=1, max_length=2_000),
+    actor: ActorContext = Depends(require_owner_actor),
+) -> dict:
+    result = _require_persistent_workflow().repository.run(
+        lambda transaction: ServicePaymentRepository(transaction).cancel(
+            payment_id=payment_id,
+            actor=actor,
+            reason=reason,
+        )
+    )
+    return result.model_dump(mode="json")
 
 
 @app.get(

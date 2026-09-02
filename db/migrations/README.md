@@ -61,6 +61,10 @@ test assets. `0014_agent_payment_profiles.sql` evolves the earlier minimal
 profile relation into the versioned Agent/Service/Recipient/Token/Program
 constraint contract, adds immutable profile snapshots, and binds optional
 Payment profile snapshots without adding a signing or credential path.
+0015_mpp_policy_engine.sql adds the MPP Policy decision log, Task/daily
+atomic budget counters and reservations, Owner Policy Exception approvals,
+and short-lived non-secret Signer authorization records. It adds no key,
+wallet, network, or transaction-submission path.
 `db/schema.sql` remains a review-friendly consolidated schema; future changes
 must be represented by a new migration and reflected in that consolidated file.
 
