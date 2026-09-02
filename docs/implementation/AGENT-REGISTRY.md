@@ -29,5 +29,18 @@ APIは作成しない。
 ## Payment Profile
 
 MPP用のPayment Profileは`mvp_agent_payment_profiles`に分離する。Profileが存在する
-ことは支払権限を意味しない。Network、Token、Recipient、1回上限、日次上限を後続の
-MPP Policyで検証し、Signerや資産移転の権限は別の境界で管理する。
+ことは支払権限を意味しない。Profileは`agent_id`、`service_id`、`recipient`、
+`network/cluster`、Token/Mint/Programのallowlist、`SERVICE_PAYMENT` purpose、risk
+level、1回・Task・日次の`amount_units`上限、承認モード、期限、停止状態、
+`version`を持つ。`wallet_id`と`public_key`は参照用の公開識別子であり、秘密鍵、seed、
+署名素材は保存しない。
+
+Profileの作成・変更・停止・rotationはOwner-only commandとし、各変更を
+`mvp_agent_payment_profile_versions`のappend-only snapshotとAuditへ記録する。
+更新はexpected versionを要求し、allowlist、network、上限、期限の拡張には明示的な
+Owner approvalを要求する。既存Paymentは`profile_id`と`profile_version`をsnapshot
+参照として保持し、Profile変更によって過去のPaymentの条件を変えない。
+
+未登録・停止・期限切れ・rotation中のProfile、allowlist外のService/Recipient/
+Token/Program、上限超過はPolicy入力として拒否する。Signerや資産移転の権限は別の
+境界で管理し、Profile単体からPaymentを実行できるAPIは持たない。

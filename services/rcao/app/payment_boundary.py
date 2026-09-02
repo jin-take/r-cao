@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Literal, Mapping
 
-from pydantic import BaseModel, ConfigDict, Field, StrictInt, field_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, field_validator, model_validator
 
 from .audit import AuditEvent, AuditWriter, OutboxEvent, OutboxWriter
 from .auth import ActorContext, ActorType
@@ -29,6 +29,10 @@ from .policy import (
     PolicyViolation,
     evaluate_policy,
     require_phase_capability,
+)
+from .payment_profile import (
+    AgentPaymentProfilePolicy,
+    AgentPaymentProfileRepository,
 )
 from .repository import RepositoryTransaction
 
@@ -111,6 +115,9 @@ class ServicePaymentRequest(BaseModel):
     correlation_id: str = Field(min_length=1, max_length=200)
     agent_id: str = Field(min_length=1, max_length=200)
     service_id: str = Field(min_length=1, max_length=300)
+    program_id: str | None = Field(default=None, min_length=1, max_length=300)
+    profile_id: str | None = Field(default=None, min_length=1, max_length=200)
+    profile_version: StrictInt | None = Field(default=None, ge=1)
     recipient: str = Field(min_length=1, max_length=300)
     recipient_kind: Literal["SERVICE"] = SERVICE_RECIPIENT_KIND
     network: PaymentNetwork
@@ -130,11 +137,15 @@ class ServicePaymentRequest(BaseModel):
         "correlation_id",
         "agent_id",
         "service_id",
+        "program_id",
+        "profile_id",
         "recipient",
         "token",
     )
     @classmethod
-    def reject_control_whitespace(cls, value: str) -> str:
+    def reject_control_whitespace(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
         if any(ord(character) < 32 for character in value):
             raise ValueError("payment identifiers cannot contain control characters")
         return value
@@ -146,10 +157,16 @@ class ServicePaymentRequest(BaseModel):
             raise ValueError("expires_at must include a timezone")
         return value.astimezone(timezone.utc)
 
+    @model_validator(mode="after")
+    def validate_profile_snapshot_pair(self) -> "ServicePaymentRequest":
+        if (self.profile_id is None) != (self.profile_version is None):
+            raise ValueError("profile_id and profile_version must be supplied together")
+        return self
+
     def canonical_payload(self) -> dict[str, str | int]:
         """Return the stable, secret-free challenge payload for hashing."""
 
-        return {
+        payload: dict[str, str | int] = {
             "schema_version": "rcao-mpp-profile-v1",
             "payment_id": self.payment_id,
             "idempotency_key": self.idempotency_key,
@@ -171,6 +188,15 @@ class ServicePaymentRequest(BaseModel):
                 "+00:00", "Z"
             ),
         }
+        # These fields were introduced with the versioned Payment Profile
+        # contract.  Omitting absent values preserves hashes for pre-profile
+        # Service Payment records while binding them for new requests.
+        if self.program_id is not None:
+            payload["program_id"] = self.program_id
+        if self.profile_id is not None:
+            payload["profile_id"] = self.profile_id
+            payload["profile_version"] = str(self.profile_version)
+        return payload
 
     def challenge_hash(self) -> str:
         encoded = json.dumps(
@@ -319,6 +345,9 @@ PAYMENT_RECORD_COLUMNS = (
     "correlation_id",
     "agent_id",
     "service_id",
+    "program_id",
+    "profile_id",
+    "profile_version",
     "recipient",
     "recipient_kind",
     "network",
@@ -364,6 +393,13 @@ def _record_from_row(row: Any) -> ServicePaymentRecord:
         correlation_id=str(values["correlation_id"]),
         agent_id=str(values["agent_id"]),
         service_id=str(values["service_id"]),
+        program_id=(str(values["program_id"]) if values.get("program_id") else None),
+        profile_id=(str(values["profile_id"]) if values.get("profile_id") else None),
+        profile_version=(
+            int(values["profile_version"])
+            if values.get("profile_version") is not None
+            else None
+        ),
         recipient=str(values["recipient"]),
         recipient_kind=str(values["recipient_kind"]),
         network=PaymentNetwork(str(values["network"])),
@@ -490,6 +526,31 @@ class ServicePaymentRepository:
             return ServicePaymentResult(existing_challenge, replayed=True)
 
         self._ensure_task_scope(request)
+        if request.profile_id is None or request.profile_version is None:
+            raise PaymentPolicyError("an active Payment Profile snapshot is required")
+        profile = AgentPaymentProfileRepository(self.transaction).require(request.profile_id)
+        if profile.agent_id != request.agent_id:
+            raise PaymentPolicyError("Payment Profile Agent does not match the request")
+        if profile.version != request.profile_version:
+            raise PaymentPolicyError("Payment Profile version does not match the request snapshot")
+        profile_evaluation = AgentPaymentProfilePolicy.evaluate(
+            profile,
+            agent_id=request.agent_id,
+            service_id=request.service_id,
+            recipient=request.recipient,
+            network=request.network.value,
+            token=request.token,
+            amount_units=request.amount_units,
+            purpose=request.purpose.value,
+            expires_at=request.expires_at,
+            program_id=request.program_id,
+            now=now,
+        )
+        if profile_evaluation.decision is PolicyDecision.DENY:
+            raise PaymentPolicyError(profile_evaluation.reason)
+        owner_approval_required = owner_approval_required or (
+            profile_evaluation.decision is PolicyDecision.REQUIRE_OWNER_APPROVAL
+        )
         evaluation = evaluate_service_payment(
             request,
             phase=actor.phase,
@@ -518,6 +579,9 @@ class ServicePaymentRepository:
             "run_id": request.run_id,
             "trace_id": request.trace_id,
             "service_id": request.service_id,
+            "program_id": request.program_id,
+            "profile_id": request.profile_id,
+            "profile_version": request.profile_version,
             "recipient": request.recipient,
             "policy_decision": evaluation.decision.value,
             "status": status.value,
@@ -527,12 +591,13 @@ class ServicePaymentRepository:
             """
             INSERT INTO mvp_service_payments
               (id, idempotency_key, challenge_id, nonce, task_id, run_id,
-               trace_id, correlation_id, agent_id, service_id, recipient,
+               trace_id, correlation_id, agent_id, service_id, program_id,
+               profile_id, profile_version, recipient,
                recipient_kind, network, token, amount_units, purpose,
                expires_at, challenge_hash, policy_version, policy_decision,
                status, created_by)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 request.payment_id,
@@ -545,6 +610,9 @@ class ServicePaymentRepository:
                 request.correlation_id,
                 request.agent_id,
                 request.service_id,
+                request.program_id or "",
+                request.profile_id,
+                request.profile_version,
                 request.recipient,
                 request.recipient_kind,
                 request.network.value,

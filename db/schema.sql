@@ -577,19 +577,63 @@ CREATE TABLE mvp_agent_evaluation_history (
 
 CREATE TABLE mvp_agent_payment_profiles (
   id TEXT PRIMARY KEY,
-  agent_id TEXT NOT NULL UNIQUE REFERENCES mvp_agents(id),
-  network TEXT NOT NULL,
+  agent_id TEXT NOT NULL REFERENCES mvp_agents(id),
+  version INTEGER NOT NULL DEFAULT 1 CHECK (version > 0),
+  wallet_id TEXT,
+  public_key TEXT,
+  network TEXT NOT NULL CHECK (network IN ('LOCAL', 'SOLANA_DEVNET')),
+  cluster TEXT NOT NULL CHECK (
+    (network = 'LOCAL' AND cluster = 'LOCAL')
+    OR (network = 'SOLANA_DEVNET' AND cluster = 'DEVNET')
+  ),
+  service_id TEXT NOT NULL,
+  recipient TEXT NOT NULL,
+  recipient_kind TEXT NOT NULL DEFAULT 'SERVICE'
+    CHECK (recipient_kind = 'SERVICE'),
   token_allowlist JSONB NOT NULL DEFAULT '[]'::jsonb
     CHECK (jsonb_typeof(token_allowlist) = 'array'),
+  mint_allowlist JSONB NOT NULL DEFAULT '[]'::jsonb
+    CHECK (jsonb_typeof(mint_allowlist) = 'array'),
+  service_allowlist JSONB NOT NULL DEFAULT '[]'::jsonb
+    CHECK (jsonb_typeof(service_allowlist) = 'array'),
   recipient_allowlist JSONB NOT NULL DEFAULT '[]'::jsonb
     CHECK (jsonb_typeof(recipient_allowlist) = 'array'),
+  program_allowlist JSONB NOT NULL DEFAULT '[]'::jsonb
+    CHECK (jsonb_typeof(program_allowlist) = 'array'),
+  purpose_allowlist JSONB NOT NULL DEFAULT '["SERVICE_PAYMENT"]'::jsonb
+    CHECK (purpose_allowlist = '["SERVICE_PAYMENT"]'::jsonb),
+  risk_level TEXT NOT NULL DEFAULT 'LOW'
+    CHECK (risk_level IN ('LOW', 'MEDIUM', 'HIGH', 'CRITICAL')),
+  approval_mode TEXT NOT NULL DEFAULT 'OWNER_APPROVAL'
+    CHECK (approval_mode IN ('AUTO_ALLOW', 'OWNER_APPROVAL', 'DENY')),
+  -- Kept for compatibility with the 0006 relation; Policy uses *_units.
   per_payment_limit_lamports BIGINT NOT NULL DEFAULT 0 CHECK (per_payment_limit_lamports >= 0),
   daily_limit_lamports BIGINT NOT NULL DEFAULT 0 CHECK (daily_limit_lamports >= 0),
-  status TEXT NOT NULL DEFAULT 'DISABLED'
-    CHECK (status IN ('DISABLED', 'ACTIVE', 'SUSPENDED', 'EXPIRED')),
-  expires_at TIMESTAMPTZ,
+  per_payment_limit_units BIGINT NOT NULL CHECK (per_payment_limit_units > 0),
+  per_task_limit_units BIGINT NOT NULL CHECK (per_task_limit_units >= per_payment_limit_units),
+  daily_limit_units BIGINT NOT NULL CHECK (daily_limit_units >= per_task_limit_units),
+  auto_approval_limit_units BIGINT NOT NULL DEFAULT 0
+    CHECK (auto_approval_limit_units >= 0 AND auto_approval_limit_units <= per_payment_limit_units),
+  max_expiry_seconds INTEGER NOT NULL CHECK (max_expiry_seconds BETWEEN 1 AND 86400),
+  status TEXT NOT NULL DEFAULT 'ACTIVE'
+    CHECK (status IN ('DRAFT', 'DISABLED', 'ACTIVE', 'SUSPENDED', 'EXPIRED', 'REVOKED')),
+  rotation_state TEXT NOT NULL DEFAULT 'CURRENT'
+    CHECK (rotation_state IN ('CURRENT', 'PENDING', 'RETIRED', 'REVOKED')),
+  expires_at TIMESTAMPTZ NOT NULL,
   created_by TEXT NOT NULL REFERENCES owners(id),
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  owner_approval_id TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CHECK (service_allowlist @> jsonb_build_array(service_id)),
+  CHECK (recipient_allowlist @> jsonb_build_array(recipient)),
+  CHECK (lower(recipient) NOT LIKE 'agent:%'),
+  CHECK (lower(recipient) NOT LIKE 'agent-%'),
+  CHECK (lower(recipient) NOT LIKE 'owner:%'),
+  CHECK (lower(recipient) NOT LIKE 'owner-%'),
+  CHECK (lower(recipient) NOT LIKE 'treasury:%'),
+  CHECK (lower(recipient) NOT LIKE 'treasury-%'),
+  CHECK (lower(recipient) NOT LIKE 'ledger:%'),
+  CHECK (lower(recipient) NOT LIKE 'ledger-%')
 );
 
 CREATE TABLE mvp_agent_change_history (
@@ -738,6 +782,25 @@ CREATE TABLE approval_requests (
   decided_at TIMESTAMPTZ
 );
 
+CREATE TABLE mvp_agent_payment_profile_versions (
+  profile_id TEXT NOT NULL REFERENCES mvp_agent_payment_profiles(id) ON DELETE RESTRICT,
+  version INTEGER NOT NULL CHECK (version > 0),
+  snapshot JSONB NOT NULL CHECK (jsonb_typeof(snapshot) = 'object'),
+  changed_by TEXT NOT NULL REFERENCES owners(id),
+  change_type TEXT NOT NULL CHECK (change_type IN ('CREATE', 'UPDATE', 'STATUS', 'ROTATE')),
+  owner_approval_id TEXT REFERENCES approval_requests(id) ON DELETE RESTRICT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (profile_id, version)
+);
+
+CREATE UNIQUE INDEX mvp_agent_payment_profiles_active_identity_idx
+  ON mvp_agent_payment_profiles(agent_id, service_id, recipient, network)
+  WHERE status IN ('ACTIVE', 'SUSPENDED');
+CREATE INDEX mvp_agent_payment_profiles_agent_status_idx
+  ON mvp_agent_payment_profiles(agent_id, status, expires_at);
+CREATE INDEX mvp_agent_payment_profile_versions_created_idx
+  ON mvp_agent_payment_profile_versions(profile_id, version DESC, created_at DESC);
+
 -- MPP Service Payments are external-service intents only. They are separate
 -- from the Virtual Reward Ledger and never represent Agent-to-Agent transfers.
 CREATE TABLE mvp_service_payments (
@@ -751,6 +814,12 @@ CREATE TABLE mvp_service_payments (
   correlation_id TEXT NOT NULL,
   agent_id TEXT NOT NULL REFERENCES mvp_agents(id) ON DELETE RESTRICT,
   service_id TEXT NOT NULL,
+  program_id TEXT NOT NULL DEFAULT '',
+  profile_id TEXT REFERENCES mvp_agent_payment_profiles(id) ON DELETE RESTRICT,
+  profile_version INTEGER CHECK (
+    (profile_id IS NULL AND profile_version IS NULL)
+    OR (profile_id IS NOT NULL AND profile_version > 0)
+  ),
   recipient TEXT NOT NULL,
   recipient_kind TEXT NOT NULL DEFAULT 'SERVICE'
     CHECK (recipient_kind = 'SERVICE'),
@@ -1170,6 +1239,9 @@ BEGIN
      OR NEW.correlation_id <> OLD.correlation_id
      OR NEW.agent_id <> OLD.agent_id
      OR NEW.service_id <> OLD.service_id
+     OR NEW.program_id <> OLD.program_id
+     OR NEW.profile_id IS DISTINCT FROM OLD.profile_id
+     OR NEW.profile_version IS DISTINCT FROM OLD.profile_version
      OR NEW.recipient <> OLD.recipient
      OR NEW.recipient_kind <> OLD.recipient_kind
      OR NEW.network <> OLD.network
@@ -1203,6 +1275,36 @@ $$ LANGUAGE plpgsql;
 CREATE TRIGGER mvp_service_payment_events_no_mutation
   BEFORE UPDATE OR DELETE ON mvp_service_payment_events
   FOR EACH ROW EXECUTE FUNCTION reject_mvp_service_payment_event_mutation();
+
+CREATE OR REPLACE FUNCTION reject_mvp_agent_payment_profile_identity_mutation()
+RETURNS trigger AS $$
+BEGIN
+  IF NEW.id <> OLD.id
+     OR NEW.agent_id <> OLD.agent_id
+     OR NEW.created_by <> OLD.created_by
+     OR NEW.created_at <> OLD.created_at
+     OR NEW.version <> OLD.version + 1
+  THEN
+    RAISE EXCEPTION 'mvp_agent_payment_profiles identity is immutable and version must increment';
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER mvp_agent_payment_profiles_identity_immutable
+  BEFORE UPDATE ON mvp_agent_payment_profiles
+  FOR EACH ROW EXECUTE FUNCTION reject_mvp_agent_payment_profile_identity_mutation();
+
+CREATE OR REPLACE FUNCTION reject_mvp_agent_payment_profile_version_mutation()
+RETURNS trigger AS $$
+BEGIN
+  RAISE EXCEPTION 'mvp_agent_payment_profile_versions is append-only';
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER mvp_agent_payment_profile_versions_no_mutation
+  BEFORE UPDATE OR DELETE ON mvp_agent_payment_profile_versions
+  FOR EACH ROW EXECUTE FUNCTION reject_mvp_agent_payment_profile_version_mutation();
 
 CREATE OR REPLACE FUNCTION reject_mvp_agent_message_mutation() RETURNS trigger AS $$
 BEGIN

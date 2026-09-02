@@ -57,7 +57,10 @@ structured operational events, and incident timelines.
 `0013_service_payment_boundary.sql` adds the isolated MPP Service Payment
 proposal table and append-only payment event table. It has no foreign key to
 the Virtual Reward Ledger or Treasury balances, and permits only local/devnet
-test assets.
+test assets. `0014_agent_payment_profiles.sql` evolves the earlier minimal
+profile relation into the versioned Agent/Service/Recipient/Token/Program
+constraint contract, adds immutable profile snapshots, and binds optional
+Payment profile snapshots without adding a signing or credential path.
 `db/schema.sql` remains a review-friendly consolidated schema; future changes
 must be represented by a new migration and reflected in that consolidated file.
 
