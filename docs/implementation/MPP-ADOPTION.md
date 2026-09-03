@@ -1,6 +1,6 @@
 # R-CAO MPP 導入方針（MPP-00）
 
-- Status: Design approved for implementation planning
+- Status: Design approved; #13 Signer boundary implemented for local/devnet fixtures
 - Related issue: [#7](https://github.com/jin-take/r-cao/issues/7)
 - Parent: [#18](https://github.com/jin-take/r-cao/issues/18)
 - Policy source of truth: `services/rcao/app/policy.py`
@@ -175,6 +175,17 @@ Paymentの実行経路は次の一方向に固定する。
 - Receiptには`payment_id`、`challenge_id`、`task_id`、`run_id`、`trace_id`、`correlation_id`、`signer_request_id`、`network`、`token`、`amount_units`、結果、外部signature（fixtureの場合はdeterministic ID）を保存する。
 - 失敗、期限切れ、停止、鍵ローテーション、replayもAudit対象とし、外部副作用を伴わないReplayではSignerを再呼出ししない。
 
+### #13 実装済みの境界
+
+`services/rcao/app/signer.py` の `PolicyBoundSignerGateway`、
+`EncryptedKeyStore`、`SignerRequest`、`SignerResult`、`SignerReceipt` がこの節の
+契約を実装する。秘密鍵はAES-GCM暗号化されたSigner内部レコードからSigner処理中
+だけ復号され、直接Signer呼出し、mainnet/testnet RPC、allowlist外のProgram/Token/
+Recipient、期限切れ・replay・stop中の送信は拒否される。DB側の公開スナップショットは
+`0016_signer_boundary.sql` の4テーブルに保存する。
+
+詳細な運用・データフローは [SIGNER-BOUNDARY.md](SIGNER-BOUNDARY.md) を正本とする。
+
 ## 8. DB・型・テストの契約
 
 後続Issueは次の同じ語彙を使う。実装上のenum名やmigration番号は各Issueで追加するが、
@@ -213,7 +224,7 @@ PaymentStatus = PROPOSED | APPROVAL_REQUIRED | APPROVED | SIGNER_REQUESTED
 | 1 | #15 | Service PaymentとReward/Treasury/Transferの型・DB・Policy分離 | 本文の分離契約を実装 |
 | 2 | #9 | Agent Payment Profile | Service、token、limit、approval modeを永続化 |
 | 3 | #14 | MPP Policy、予算、停止制御 | Decisionとstop/limitを実行可能化 |
-| 4 | #13 | devnet Wallet・Signer境界 | 秘密情報をAgentから隔離 |
+| 4 | #13 | devnet Wallet・Signer境界 | 秘密情報をAgentから隔離（実装済み） |
 | 5 | #11 | MPP Client・HTTP 402 | 外部challengeを正規化 |
 | 6 | #8 | Service Agent・支払受付 | recipient registrationと受領条件 |
 | 7 | #12 | Payment Receipt・監査・検索 | ReceiptとOperations read model |

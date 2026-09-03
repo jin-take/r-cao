@@ -308,6 +308,7 @@ class MppSignerAuthorization(BaseModel):
     authorization_id: str
     payment_id: str
     policy_decision_id: str
+    policy_version: str = MPP_ENGINE_POLICY_VERSION
     approval_id: str | None = None
     authorization_hash: str = Field(min_length=64, max_length=64)
     issued_by: str
@@ -579,6 +580,8 @@ class MppPolicyEngine:
         payload = {
             "authorization_id": authorization_id,
             "payment_id": evaluation.payment_id,
+            "policy_decision_id": evaluation.decision_id
+            or f"mpp-decision-{evaluation.payment_id}",
             "policy_version": evaluation.policy_version,
             "correlation_id": evaluation.correlation_id,
             "expires_at": expires_at.isoformat(),
@@ -590,6 +593,7 @@ class MppPolicyEngine:
             authorization_id=authorization_id,
             payment_id=evaluation.payment_id,
             policy_decision_id=evaluation.decision_id or f"mpp-decision-{evaluation.payment_id}",
+            policy_version=evaluation.policy_version,
             approval_id=evaluation.approval_id,
             authorization_hash=authorization_hash,
             issued_by=issued_by,
@@ -1490,6 +1494,7 @@ class MppPolicyRepository:
                     "authorization_id": authorization_id,
                     "payment_id": payment_id,
                     "policy_decision_id": policy_decision_id,
+                    "policy_version": MPP_ENGINE_POLICY_VERSION,
                     "expires_at": expires_at.isoformat(),
                 },
                 sort_keys=True,
@@ -1500,8 +1505,9 @@ class MppPolicyRepository:
             """
             INSERT INTO mvp_mpp_signer_authorizations
               (id, payment_id, policy_decision_id, approval_id,
-               authorization_hash, issued_by, issued_at, expires_at, status)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'ISSUED')
+               policy_version, authorization_hash, issued_by, issued_at,
+               expires_at, status)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'ISSUED')
             ON CONFLICT (payment_id) DO NOTHING
             """,
             (
@@ -1509,6 +1515,7 @@ class MppPolicyRepository:
                 payment_id,
                 policy_decision_id,
                 approval_id,
+                MPP_ENGINE_POLICY_VERSION,
                 authorization_hash,
                 issued_by,
                 current,
@@ -1518,7 +1525,8 @@ class MppPolicyRepository:
         row = self.transaction.fetch_one(
             """
             SELECT id, payment_id, policy_decision_id, approval_id,
-                   authorization_hash, issued_by, issued_at, expires_at, status
+                   policy_version, authorization_hash, issued_by, issued_at,
+                   expires_at, status
             FROM mvp_mpp_signer_authorizations
             WHERE payment_id = %s
             """,
@@ -1531,21 +1539,22 @@ class MppPolicyRepository:
             payment_id=str(_value(row, "payment_id", 1)),
             policy_decision_id=str(_value(row, "policy_decision_id", 2)),
             approval_id=_value(row, "approval_id", 3),
-            authorization_hash=str(_value(row, "authorization_hash", 4)),
-            issued_by=str(_value(row, "issued_by", 5)),
-            issued_at=_utc(_value(row, "issued_at", 6)),
-            expires_at=_utc(_value(row, "expires_at", 7)),
-            status=MppSignerAuthorizationStatus(str(_value(row, "status", 8))),
+            policy_version=str(_value(row, "policy_version", 4)),
+            authorization_hash=str(_value(row, "authorization_hash", 5)),
+            issued_by=str(_value(row, "issued_by", 6)),
+            issued_at=_utc(_value(row, "issued_at", 7)),
+            expires_at=_utc(_value(row, "expires_at", 8)),
+            status=MppSignerAuthorizationStatus(str(_value(row, "status", 9))),
         )
         authorization.assert_usable(now=current)
         self.transaction.execute(
             """
             UPDATE mvp_service_payments
-            SET status = 'SIGNER_REQUESTED', signer_request_id = %s,
+            SET status = 'SIGNER_REQUESTED',
                 updated_at = now()
             WHERE id = %s AND status IN ('PROPOSED', 'APPROVED', 'SIGNER_REQUESTED')
             """,
-            (authorization.authorization_id, payment_id),
+            (payment_id,),
         )
         self._payment_event(
             payment_id=payment_id,
