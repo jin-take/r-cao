@@ -216,7 +216,7 @@ def _service_payment_request(
 def test_clean_migrations_create_the_complete_core_schema(migrated_database) -> None:
     connection, history = migrated_database
 
-    assert [item.version for item in history] == list(range(1, 17))
+    assert [item.version for item in history] == list(range(1, 18))
     assert [item.name for item in history] == [
         "phase1_foundation",
         "owner_directed_mvp",
@@ -234,6 +234,7 @@ def test_clean_migrations_create_the_complete_core_schema(migrated_database) -> 
         "agent_payment_profiles",
         "mpp_policy_engine",
         "signer_boundary",
+        "mpp_client_attempts",
     ]
 
     required_tables = {
@@ -264,6 +265,7 @@ def test_clean_migrations_create_the_complete_core_schema(migrated_database) -> 
         "mvp_signer_requests",
         "mvp_signer_results",
         "mvp_signer_receipts",
+        "mvp_mpp_client_attempts",
     }
     with connection.cursor() as cursor:
         cursor.execute(
