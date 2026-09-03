@@ -1,6 +1,6 @@
 # R-CAO MPP 導入方針（MPP-00）
 
-- Status: Design approved; #13 Signer boundary implemented for local/devnet fixtures
+- Status: Design approved; #13 Signer boundary and #11 MPP Client implemented for local/devnet fixtures
 - Related issue: [#7](https://github.com/jin-take/r-cao/issues/7)
 - Parent: [#18](https://github.com/jin-take/r-cao/issues/18)
 - Policy source of truth: `services/rcao/app/policy.py`
@@ -20,7 +20,7 @@ Solana devnet fixtureに限定する。
 | 項目 | 採用する方針 | この段階でしないこと |
 |---|---|---|
 | Protocol | MPP wire protocolをversioned internal adapterで包む | AgentやUIがMPP wire formatを直接解釈すること |
-| SDK | #7では外部SDKを依存に追加せず、adapter interfaceを正本にする。候補SDKの採用は#11で検証・固定する | 未検証SDKの自動更新、SDKのAPIをPolicy境界にすること |
+| SDK | #7では外部SDKを依存に追加せず、adapter interfaceを正本にする。#11はprovider adapterと内部のversioned contractを実装する | 未検証SDKの自動更新、SDKのAPIをPolicy境界にすること |
 | Adapter version | `rcao-mpp-profile-v1`（内部の正規化契約） | SDKの暗黙の最新版への追随 |
 | HTTP 402 | 構造化されたPayment Challengeを受け、正規化・検証してからPolicyへ渡す | Challengeの自由文だけで支払うこと |
 | Environment | `LOCAL`、`SOLANA_DEVNET` | testnet、mainnet、顧客環境 |
@@ -31,7 +31,9 @@ Solana devnet fixtureに限定する。
 
 `rcao-mpp-profile-v1`は外部MPP仕様の代替ではない。外部仕様やSDKが変更されても、
 Control Planeの内部契約、Policy、監査相関を安定させるためのadapter profileである。
-外部SDKの採用とHTTP clientの実装は#11で確定する。
+外部SDKをPolicy境界へ直接持ち込まず、HTTP 402 clientとprovider adapterの実装を
+`services/rcao/app/mpp_client.py` に固定する。外部MPP仕様との接続はこのadapterを
+介して追加し、ChallengeやSignerの秘密情報をAgentへ渡さない。
 
 ## 2. Phaseと環境の境界
 
@@ -175,6 +177,20 @@ Paymentの実行経路は次の一方向に固定する。
 - Receiptには`payment_id`、`challenge_id`、`task_id`、`run_id`、`trace_id`、`correlation_id`、`signer_request_id`、`network`、`token`、`amount_units`、結果、外部signature（fixtureの場合はdeterministic ID）を保存する。
 - 失敗、期限切れ、停止、鍵ローテーション、replayもAudit対象とし、外部副作用を伴わないReplayではSignerを再呼出ししない。
 
+### #11 実装済みのClient
+
+`services/rcao/app/mpp_client.py` の `MppClient` は、HTTP 402を
+`rcao-mpp-profile-v1` Challengeへ正規化し、Payment Profile、Task/Run scope、
+Phase、Policy、必要なOwner承認を通過した場合だけ #13 の
+`PolicyBoundSignerGateway`を一度呼び出す。公開proofとprovider receiptを検証して
+同じChallengeへ一度だけ再試行し、同じidempotency key／nonceの再送はSignerや外部
+Serviceを再度呼ばずに結果を返す。`LOCAL`と`SOLANA_DEVNET`のfixtureを分離し、
+TESTNET／MAINNETはdenyする。
+
+`0017_mpp_client_attempts.sql` はChallenge、Payment、Task/Run/Trace、Signer参照、
+proof hash、retry statusだけをappend-onlyで保存し、秘密鍵や署名済みtransactionは
+保存しない。詳細は [MPP-CLIENT.md](MPP-CLIENT.md) を正本とする。
+
 ### #13 実装済みの境界
 
 `services/rcao/app/signer.py` の `PolicyBoundSignerGateway`、
@@ -225,7 +241,7 @@ PaymentStatus = PROPOSED | APPROVAL_REQUIRED | APPROVED | SIGNER_REQUESTED
 | 2 | #9 | Agent Payment Profile | Service、token、limit、approval modeを永続化 |
 | 3 | #14 | MPP Policy、予算、停止制御 | Decisionとstop/limitを実行可能化 |
 | 4 | #13 | devnet Wallet・Signer境界 | 秘密情報をAgentから隔離（実装済み） |
-| 5 | #11 | MPP Client・HTTP 402 | 外部challengeを正規化 |
+| 5 | #11 | MPP Client・HTTP 402 | 外部challengeを正規化（実装済み） |
 | 6 | #8 | Service Agent・支払受付 | recipient registrationと受領条件 |
 | 7 | #12 | Payment Receipt・監査・検索 | ReceiptとOperations read model |
 | 8 | #10 | Payment Session・Channel | 再利用・期限・replay境界の拡張 |

@@ -83,6 +83,7 @@ def test_repository_migrations_are_ordered_and_cover_schema_layers(tmp_path: Pat
         (14, "agent_payment_profiles"),
         (15, "mpp_policy_engine"),
         (16, "signer_boundary"),
+        (17, "mpp_client_attempts"),
     ]
     assert "CREATE TABLE agents" in migrations[0].sql
     assert "CREATE TABLE mvp_tasks" in migrations[1].sql
@@ -136,6 +137,8 @@ def test_repository_migrations_are_ordered_and_cover_schema_layers(tmp_path: Pat
     assert "policy_version" in migrations[15].sql
     assert "mvp_signer_requests_no_mutation" in migrations[15].sql
     assert "mvp_service_payments_signer_request_fk" in migrations[15].sql
+    assert "mvp_mpp_client_attempts" in migrations[16].sql
+    assert "mvp_mpp_client_attempts_no_mutation" in migrations[16].sql
     assert all(len(item.checksum) == 64 for item in migrations)
 
 
