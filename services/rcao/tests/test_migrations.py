@@ -82,6 +82,7 @@ def test_repository_migrations_are_ordered_and_cover_schema_layers(tmp_path: Pat
         (13, "service_payment_boundary"),
         (14, "agent_payment_profiles"),
         (15, "mpp_policy_engine"),
+        (16, "signer_boundary"),
     ]
     assert "CREATE TABLE agents" in migrations[0].sql
     assert "CREATE TABLE mvp_tasks" in migrations[1].sql
@@ -128,6 +129,13 @@ def test_repository_migrations_are_ordered_and_cover_schema_layers(tmp_path: Pat
     assert "mvp_mpp_signer_authorizations" in migrations[14].sql
     assert "mvp_mpp_policy_decisions_no_mutation" in migrations[14].sql
     assert "CANCELLED" in migrations[14].sql
+    assert "mvp_signer_wallets" in migrations[15].sql
+    assert "mvp_signer_requests" in migrations[15].sql
+    assert "mvp_signer_results" in migrations[15].sql
+    assert "mvp_signer_receipts" in migrations[15].sql
+    assert "policy_version" in migrations[15].sql
+    assert "mvp_signer_requests_no_mutation" in migrations[15].sql
+    assert "mvp_service_payments_signer_request_fk" in migrations[15].sql
     assert all(len(item.checksum) == 64 for item in migrations)
 
 
