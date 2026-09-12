@@ -96,6 +96,6 @@ def test_expired_session_fails_closed() -> None:
 
 def test_mainnet_and_reward_use_are_forbidden() -> None:
     with pytest.raises(PaymentSessionError, match="local/devnet"):
-        make_session(network=PaymentNetwork.SOLANA_MAINNET, cluster="MAINNET")
+        make_session(network="MAINNET", cluster="MAINNET")
     with pytest.raises(PaymentSessionError, match="Reward/Treasury"):
         make_session(purpose="REWARD")
