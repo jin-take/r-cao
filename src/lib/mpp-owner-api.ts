@@ -60,3 +60,20 @@ export function cancelMppPayment(
     {},
   );
 }
+
+export function stopMppPaymentProfile(
+  session: ConsoleSession,
+  profileId: string,
+  expectedVersion: number,
+  reason: string,
+): Promise<unknown> {
+  return ownerPost<unknown>(
+    session,
+    `/api/v1/commands/payment-profiles/${encodeURIComponent(profileId)}/status`,
+    {
+      status: "STOPPED",
+      expected_version: expectedVersion,
+      reason,
+    },
+  );
+}
